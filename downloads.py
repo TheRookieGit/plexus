@@ -502,6 +502,10 @@ class Downloads:
         batches = [self.public(i) for i in ids]
         return {'batches':batches,'netdisk':self.lib.netdisk.status(),'locations':self.locations()}
 
+    def applying(self):
+        with self.lib.db() as db:
+            return bool(db.execute("SELECT 1 FROM dl_batches WHERE state='applying'").fetchone())
+
     def summary(self):
         with self.lib.db() as db:
             active = db.execute("SELECT COUNT(*) FROM dl_batches WHERE state IN ('queued','saving','downloading')").fetchone()[0]

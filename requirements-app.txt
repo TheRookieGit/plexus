@@ -1,0 +1,4 @@
+# Only for building the Windows app; the plain server needs no packages.
+pyinstaller==6.11.1
+pystray==0.19.5
+pillow==11.0.0

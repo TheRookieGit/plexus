@@ -1,0 +1,98 @@
+# Builds Plexus.exe on Windows and publishes it as the "app-latest" release.
+name: Build Windows app
+
+on:
+  push:
+    branches: [main]
+    paths: ['*.py', 'web/**', 'assets/**', 'tests/**', 'requirements-app.txt', '.github/workflows/windows-app.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-app
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install build tools
+        run: python -m pip install -r requirements-app.txt
+      - name: Run tests
+        run: python -m unittest discover -s tests -t .
+      - name: Check page scripts
+        run: |
+          node --check web/common.js
+          node --check web/app.js
+          node --check web/tree.js
+          node --check web/downloads.js
+      - name: Record build version
+        shell: pwsh
+        run: '@{ sha = $env:GITHUB_SHA } | ConvertTo-Json | Set-Content -Encoding utf8 build_info.json'
+      - name: Build
+        run: >
+          pyinstaller --noconfirm --clean --windowed --name Plexus
+          --icon assets/plexus.ico --add-data "web;web" --add-data "assets/plexus.ico;assets" --add-data "build_info.json;."
+          desktop_app.py
+      # There is no Plex Media Server on the build machine, so the check is that the service starts and answers.
+      - name: Smoke test the packaged service
+        shell: pwsh
+        run: |
+          $app = Start-Process dist\Plexus\Plexus.exe -PassThru -ArgumentList '--no-window','--port','8790','--data-dir',"$env:RUNNER_TEMP\data"
+          $ok = $false
+          foreach ($i in 1..30) {
+            Start-Sleep 1
+            try {
+              $status = Invoke-RestMethod http://127.0.0.1:8790/api/status
+              if ($null -ne $status.stats -and -not $status.sync.running) { $ok = $true; break }
+            } catch {}
+          }
+          $page = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8790/downloads.html
+          Stop-Process $app -Force
+          if (-not $ok) { throw 'Packaged app did not answer' }
+          if ($page.StatusCode -ne 200) { throw 'Packaged app did not serve the download page' }
+      - name: Check tray and window dependencies load
+        shell: pwsh
+        run: |
+          python -c "import pystray, PIL.Image; from desktop_app import find_edge, ICON; PIL.Image.open(ICON).load(); print('edge:', find_edge())"
+          $app = Start-Process dist\Plexus\Plexus.exe -PassThru -ArgumentList '--minimized','--port','8791','--data-dir',"$env:RUNNER_TEMP\data2"
+          Start-Sleep 8
+          if ($app.HasExited) { throw "Packaged tray app exited with code $($app.ExitCode)" }
+          Invoke-RestMethod http://127.0.0.1:8791/api/session | Out-Null
+          Stop-Process $app -Force
+      - name: Package
+        run: Compress-Archive -Path dist\Plexus -DestinationPath Plexus-windows.zip
+        shell: pwsh
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          gh release delete app-latest --yes --cleanup-tag 2>$null
+          gh release create app-latest Plexus-windows.zip --target $env:GITHUB_SHA --title "Plexus Windows 版（最新）" --notes "解压后双击「Plexus.exe」。构建自 $env:GITHUB_SHA。"
+      - name: Check an older copy updates itself to this build
+        shell: pwsh
+        run: |
+          $old = "$env:RUNNER_TEMP\old-app"
+          Copy-Item -Recurse dist\Plexus $old
+          '{"sha": "0000000"}' | Set-Content -Encoding utf8 "$old\_internal\build_info.json"
+          Start-Process "$old\Plexus.exe" -ArgumentList '--minimized','--port','8792','--data-dir',"$env:RUNNER_TEMP\data3"
+          $updated = $false
+          foreach ($i in 1..90) {
+            Start-Sleep 2
+            try {
+              $info = Get-Content -Raw "$old\_internal\build_info.json" | ConvertFrom-Json
+              if ($info.sha -eq $env:GITHUB_SHA) { $updated = $true; break }
+            } catch {}
+          }
+          Start-Sleep 8
+          $running = Get-Process | Where-Object { $_.Path -eq "$old\Plexus.exe" }
+          Get-Process | Where-Object { $_.Path -like "$env:RUNNER_TEMP*" } | Stop-Process -Force
+          if (-not $updated) { throw 'The older copy did not update itself' }
+          if (-not $running) { throw 'The updated app did not restart' }
