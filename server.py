@@ -159,7 +159,7 @@ class Library:
 
 class Handler(BaseHTTPRequestHandler):
     server_version = 'Plexus/0.1'
-    STATIC = {'/':'web/index.html',**{f'/{name}':f'web/{name}' for name in ('downloads.html','common.js','app.js','tree.js','downloads.js','style.css','favicon.svg')}}
+    STATIC = {'/':'web/index.html',**{f'/{name}':f'web/{name}' for name in ('downloads.html','common.js','app.js','tree.js','downloads.js','style.css','favicon.svg','apple-touch-icon.png')}}
     PUBLIC_API = {'/api/session','/api/login'}
     # These act on the Windows machine itself, so other computers may not call them.
     LOCAL_ONLY = {'/api/runtime/reload','/api/app/show','/api/reveal','/api/access/password','/api/settings'}
@@ -266,7 +266,8 @@ class Handler(BaseHTTPRequestHandler):
             if url.path=='/api/search':return self.json(self.lib.wishlist.search(query.get('q',''),query.get('kind','')))
             if url.path in self.STATIC:
                 path = BASE/self.STATIC[url.path]
-                return self.send_content(200,(mimetypes.guess_type(path.name)[0] or 'text/plain')+'; charset=utf-8',path.read_bytes(),
+                kind = mimetypes.guess_type(path.name)[0] or 'text/plain'
+                return self.send_content(200,kind if kind.startswith('image/') and kind!='image/svg+xml' else kind+'; charset=utf-8',path.read_bytes(),
                     {'Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; frame-src 'none'; object-src 'none'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'"})
             return self.json({'error':'Not found'},404)
         except (BrokenPipeError,ConnectionResetError,ConnectionAbortedError):pass
