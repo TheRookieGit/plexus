@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 import urllib.error
 import urllib.parse
@@ -90,6 +91,13 @@ class Plex:
     def refresh(self,section,path=''):
         """Rescan a library, or only one folder of it."""
         self.call(f'/library/sections/{section}/refresh',{'path':path} if path else None)
+
+    def wait_idle(self,timeout=180):
+        """Wait while Plex is still scanning any library."""
+        deadline = time.time()+timeout
+        time.sleep(2)
+        while time.time()<deadline and any(d.get('refreshing') for d in self.call('/library/sections').get('Directory',[])):
+            time.sleep(3)
 
     def empty_trash(self,section):
         self.call(f'/library/sections/{section}/emptyTrash',method='PUT')

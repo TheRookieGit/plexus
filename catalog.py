@@ -11,6 +11,7 @@ import os
 from disk import drive, guess_title, norm, rank, walk
 
 PAGE = 120
+VERSION = '2'  # The catalog tables are rebuilt by every sync, so a new layout simply replaces them.
 SORTS = {'added':'added DESC,title','title':'title COLLATE NOCASE,year','year':'year DESC,title','size':'size DESC,title'}
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS sections (id TEXT PRIMARY KEY,kind TEXT NOT NULL,title TEXT NOT NULL,locations TEXT NOT NULL);
@@ -19,18 +20,21 @@ CREATE TABLE IF NOT EXISTS items (
   original_title TEXT NOT NULL,year INTEGER,summary TEXT NOT NULL,thumb TEXT NOT NULL,guid TEXT NOT NULL,
   added REAL NOT NULL,rating REAL,folder TEXT NOT NULL,
   size INTEGER NOT NULL,files INTEGER NOT NULL,episodes INTEGER NOT NULL,seasons INTEGER NOT NULL,
-  resolution TEXT NOT NULL,drives TEXT NOT NULL,missing INTEGER NOT NULL,unindexed INTEGER NOT NULL);
+  resolution TEXT NOT NULL,drives TEXT NOT NULL,missing INTEGER NOT NULL,unindexed INTEGER NOT NULL,
+  versions INTEGER NOT NULL DEFAULT 0,spare INTEGER NOT NULL DEFAULT 0,twins TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS media (
   id INTEGER PRIMARY KEY,item_id TEXT NOT NULL,episode_id TEXT NOT NULL,season INTEGER,episode INTEGER,
   episode_title TEXT NOT NULL,path TEXT NOT NULL,norm TEXT NOT NULL,drive TEXT NOT NULL,size INTEGER NOT NULL,
   resolution TEXT NOT NULL,width INTEGER,height INTEGER,video_codec TEXT NOT NULL,audio_codec TEXT NOT NULL,
-  container TEXT NOT NULL,duration INTEGER,plex INTEGER NOT NULL,state TEXT NOT NULL);
+  container TEXT NOT NULL,duration INTEGER,plex INTEGER NOT NULL,state TEXT NOT NULL,version TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS media_item ON media(item_id);
 CREATE TABLE IF NOT EXISTS files (
   norm TEXT PRIMARY KEY,path TEXT NOT NULL,location TEXT NOT NULL,section TEXT NOT NULL,drive TEXT NOT NULL,
   size INTEGER NOT NULL,mtime REAL NOT NULL,kind TEXT NOT NULL,item_id TEXT NOT NULL,plex INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS files_item ON files(item_id);
+CREATE TABLE IF NOT EXISTS favorites (key TEXT PRIMARY KEY,added REAL NOT NULL);
 '''
+FAVORITE = "EXISTS(SELECT 1 FROM favorites f WHERE f.key=CASE WHEN items.guid<>'' THEN items.guid ELSE items.id END)"
 ITEM_FIELDS = 'id,source,section,kind,title,original_title,year,summary,thumb,guid,added,rating,folder'
 
 
@@ -52,7 +56,7 @@ def plex_media(meta,item_id,episode=None):
                    'drive':drive(part['file']),'size':int(part.get('size') or 0),'resolution':str(version.get('videoResolution','')),
                    'width':version.get('width'),'height':version.get('height'),'video_codec':version.get('videoCodec',''),
                    'audio_codec':version.get('audioCodec',''),'container':part.get('container') or version.get('container',''),
-                   'duration':part.get('duration') or version.get('duration'),'plex':1,'state':'ok'}
+                   'duration':part.get('duration') or version.get('duration'),'plex':1,'state':'ok','version':str(version.get('id',''))}
 
 
 def disk_id(path):
@@ -63,6 +67,9 @@ class Catalog:
     def __init__(self,lib):
         self.lib = lib
         with lib.db() as db:
+            if db.execute("SELECT value FROM settings WHERE key='catalog_version'").fetchone()!=(VERSION,):
+                db.executescript('DROP TABLE IF EXISTS sections;DROP TABLE IF EXISTS items;DROP TABLE IF EXISTS media;DROP TABLE IF EXISTS files;')
+                db.execute('INSERT OR REPLACE INTO settings VALUES (?,?)',('catalog_version',VERSION))
             db.executescript(SCHEMA)
 
     def sync(self,plex,progress=lambda phase:None):
@@ -120,7 +127,7 @@ class Catalog:
                 found['item_id'],found['plex'] = row['item_id'],1
             else:
                 # Only library folders that are connected were scanned; a file elsewhere is not reported as lost.
-                row['state'] = 'missing' if place(row['norm']) else 'offline'
+                row['state'] = 'missing' if place(row['norm']) and not self.lib.recently_deleted(row['norm']) else 'offline'
         # Files Plex does not list join the Plex entry sharing their top folder, or become an entry of their own.
         owners = defaultdict(set)
         for f in files.values():
@@ -146,7 +153,7 @@ class Catalog:
             media.append({'item_id':f['item_id'],'episode_id':'','season':None,'episode':None,'episode_title':'',
                           'path':f['path'],'norm':f['norm'],'drive':f['drive'],'size':f['size'],'resolution':'','width':None,
                           'height':None,'video_codec':'','audio_codec':'','container':ntpath.splitext(f['path'])[1].lstrip('.').lower(),
-                          'duration':None,'plex':0,'state':'ok'})
+                          'duration':None,'plex':0,'state':'ok','version':f['norm']})
         # Subtitles belong to whatever entry owns a video in the same folder.
         folders = {ntpath.dirname(f['norm']):f['item_id'] for f in files.values() if f['item_id']}
         for f in files.values():
@@ -160,10 +167,37 @@ class Catalog:
             total['unindexed'] += not row['plex']
             if row['episode_id']:total['episodes'].add(row['episode_id']);total['seasons'].add(row['season'])
             if rank(row['resolution'])<rank(total['resolution']):total['resolution'] = row['resolution']
+        # The same movie or episode kept more than once; parts of one version (CD1, CD2) are not copies.
+        copies = defaultdict(lambda:defaultdict(int))
+        for row in media:
+            if row['state']=='ok' and (row['episode_id'] or items[row['item_id']]['kind']=='movie'):
+                copies[(row['item_id'],row['episode_id'])][row['version']] += row['size']
+        for (item_id,_),versions in copies.items():
+            if len(versions)>1:
+                totals[item_id]['versions'] = totals[item_id].get('versions',0)+len(versions)-1
+                totals[item_id]['spare'] = totals[item_id].get('spare',0)+sum(versions.values())-max(versions.values())
         for item_id,item in items.items():
             total = totals[item_id]
             item.update(size=total['size'],files=total['files'],episodes=len(total['episodes']),seasons=len(total['seasons']),
-                        resolution=total['resolution'],drives=','.join(sorted(total['drives'])),missing=total['missing'],unindexed=total['unindexed'])
+                        resolution=total['resolution'],drives=','.join(sorted(total['drives'])),missing=total['missing'],unindexed=total['unindexed'],
+                        versions=total.get('versions',0),spare=total.get('spare',0),twins='')
+        # Separate entries for one title: Plex's own match in two libraries, or a folder Plex missed named like a Plex entry.
+        same = defaultdict(list)
+        for item in items.values():
+            if item['guid'].startswith('plex://'):same[item['guid']].append(item['id'])
+        names = defaultdict(list)
+        for item in items.values():
+            if item['source']=='plex':
+                for name in {item['title'],item['original_title']}-{''}:names[name.casefold()].append(item)
+        for item in items.values():
+            if item['source']=='disk':
+                for other in names.get(item['title'].casefold(),[]):
+                    if not item['year'] or not other['year'] or abs(item['year']-other['year'])<=1:same['name:'+other['id']] += [other['id'],item['id']]
+        for ids in same.values():
+            ids = list(dict.fromkeys(ids))
+            if len(ids)>1:
+                for item_id in ids:
+                    items[item_id]['twins'] = ','.join(sorted(set(filter(None,items[item_id]['twins'].split(',')))|set(ids)-{item_id}))
 
     @staticmethod
     def _group(path,location):
@@ -183,6 +217,8 @@ class Catalog:
         if query.get('source') in {'plex','disk'}:where.append('source=?');args.append(query['source'])
         if query.get('issue')=='unindexed':where.append('unindexed>0')
         if query.get('issue')=='missing':where.append('missing>0')
+        if query.get('favorite'):where.append(FAVORITE)
+        if query.get('issue')=='duplicate':where.append("(versions>0 OR twins<>'')")
         if query.get('drive'):where.append("(','||drives||',') LIKE ?");args.append(f'%,{query["drive"]},%')
         if query.get('q'):
             like = f'%{query["q"].strip()}%'
@@ -192,21 +228,23 @@ class Catalog:
         with self.lib.db() as db:
             total = db.execute(f'SELECT COUNT(*) FROM items WHERE {sql}',args).fetchone()[0]
             rows = db.execute(f'''SELECT id,source,section,kind,title,original_title,year,thumb<>'' poster,added,size,files,episodes,seasons,
-                                  resolution,drives,missing,unindexed FROM items WHERE {sql} ORDER BY {SORTS.get(query.get("sort"),SORTS["added"])}
+                                  resolution,drives,missing,unindexed,versions,spare,twins,{FAVORITE} favorite FROM items WHERE {sql} ORDER BY {SORTS.get(query.get("sort"),SORTS["added"])}
                                   LIMIT ? OFFSET ?''',[*args,PAGE,(page-1)*PAGE]).fetchall()
         return {'items':[dict(r) for r in rows],'total':total,'page':page,'pages':max(1,-(-total//PAGE))}
 
     def item(self,item_id):
         with self.lib.db() as db:
-            item = db.execute('SELECT * FROM items WHERE id=?',(item_id,)).fetchone()
+            item = db.execute(f'SELECT *,{FAVORITE} favorite FROM items WHERE id=?',(item_id,)).fetchone()
             if not item:raise KeyError('这个条目已不在目录中，请重新同步。')
             media = [dict(r) for r in db.execute('SELECT * FROM media WHERE item_id=? ORDER BY season,episode,plex DESC,path',(item_id,))]
             subtitles = [dict(r) for r in db.execute("SELECT path,size FROM files WHERE item_id=? AND kind='subtitle' ORDER BY path",(item_id,))]
             section = db.execute('SELECT title FROM sections WHERE id=?',(item['section'],)).fetchone()
             machine = db.execute("SELECT value FROM settings WHERE key='plex_machine'").fetchone()
+            twins = item['twins'].split(',') if item['twins'] else []
+            twins = [dict(r) for r in db.execute(f"SELECT id,title,year,section,size,drives FROM items WHERE id IN ({','.join('?'*len(twins))})",twins)] if twins else []
         for row in media:
             row.pop('norm')
-        result = dict(item)|{'media':media,'subtitles':subtitles,'section_title':section[0] if section else ''}
+        result = dict(item)|{'media':media,'subtitles':subtitles,'section_title':section[0] if section else '','twin_items':twins}
         if item['source']=='plex' and machine:
             result['plex_url'] = f'https://app.plex.tv/desktop/#!/server/{machine[0]}/details?key=%2Flibrary%2Fmetadata%2F{item_id[5:]}'
         return result
@@ -221,6 +259,8 @@ class Catalog:
         with self.lib.db() as db:
             row = db.execute('''SELECT COUNT(*) items,COALESCE(SUM(size),0) size,COALESCE(SUM(files),0) files,
                                 COALESCE(SUM(source='disk'),0) disk_items,COALESCE(SUM(unindexed),0) unindexed,
-                                COALESCE(SUM(missing),0) missing FROM items WHERE files>0 OR missing>0''').fetchone()
+                                COALESCE(SUM(missing),0) missing,COALESCE(SUM(versions>0 OR twins<>''),0) duplicates,
+                                COALESCE(SUM(spare),0) spare FROM items WHERE files>0 OR missing>0''').fetchone()
+            favorites = db.execute(f'SELECT COUNT(*) FROM items WHERE files>0 AND {FAVORITE}').fetchone()[0]
             drives = [dict(r) for r in db.execute("SELECT drive,COUNT(*) files,SUM(size) size FROM files WHERE kind='video' GROUP BY drive ORDER BY drive")]
-        return dict(row)|{'drives':drives}
+        return dict(row)|{'drives':drives,'favorites':favorites}

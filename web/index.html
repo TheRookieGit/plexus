@@ -8,6 +8,7 @@
   <title>Plexus · 我的影视</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="style.css?v=dev">
+  <script defer src="common.js?v=dev"></script>
   <script defer src="app.js?v=dev"></script>
   <script defer src="tree.js?v=dev"></script>
 </head>
@@ -16,6 +17,7 @@
     <a class="brand" href="./" aria-label="Plexus 首页"><img src="favicon.svg" alt=""><span>Plexus<small>和 Plex 同步的影视收藏</small></span></a>
     <label class="search"><span data-icon="search"></span><input id="search" type="search" placeholder="搜索片名、原名或文件夹" autocomplete="off"></label>
     <div class="top-actions">
+      <a id="downloads-link" class="button secondary" href="downloads.html" title="从网盘链接下载，查看下载进度"><span data-icon="download"></span><span>下载</span><span id="downloads-count" class="count" hidden></span></a>
       <button id="tree-button" class="button secondary" title="查看每个盘和文件夹里有多少视频"><span data-icon="folder"></span><span>目录树</span></button>
       <button id="sync-button" class="button secondary" title="立即和 Plex 同步并扫描硬盘"><span data-icon="refresh"></span><span id="sync-label">同步</span></button>
       <button id="settings-button" class="icon-button" aria-label="设置" title="设置"><span data-icon="settings"></span></button>
@@ -27,6 +29,7 @@
     <div id="alert" class="alert" hidden></div>
     <nav class="filters" aria-label="筛选">
       <div id="sections" class="tabs" role="tablist"></div>
+      <button id="wish-add" class="button" hidden><span data-icon="plus"></span><span>添加想看</span></button>
       <div class="filter-controls">
         <select id="drive-filter" aria-label="所在硬盘"><option value="">全部硬盘</option></select>
         <select id="sort" aria-label="排序">
@@ -42,6 +45,24 @@
   <dialog id="detail-dialog" class="sheet detail">
     <button class="close" data-close aria-label="关闭">×</button>
     <div id="detail"></div>
+  </dialog>
+
+  <dialog id="delete-dialog" class="sheet narrow wide-ish"><div id="delete-body"></div></dialog>
+
+  <dialog id="wish-dialog" class="sheet narrow">
+    <button class="close" data-close aria-label="关闭">×</button>
+    <form id="wish-form" class="stack">
+      <h2 id="wish-title-text">添加想看</h2>
+      <label>在 Plex 的在线资料库里搜索<input id="wish-query" type="search" placeholder="输入片名，选择后自动填写" autocomplete="off"></label>
+      <ul id="wish-results" class="search-results"></ul>
+      <input id="wish-id" type="hidden">
+      <div class="row"><label class="grow">片名<input id="wish-title" type="text" required></label><label class="year">年份<input id="wish-year" type="text" inputmode="numeric" maxlength="4"></label>
+        <label>类型<select id="wish-kind"><option value="movie">电影</option><option value="show">剧集</option></select></label></div>
+      <label>网盘链接（夸克或百度，可以带提取码，一行一个）<textarea id="wish-links" rows="3" placeholder="https://pan.quark.cn/s/…"></textarea></label>
+      <label>备注<input id="wish-note" type="text" maxlength="200" placeholder="例如：等 4K 版本"></label>
+      <div class="dialog-actions"><button id="wish-delete" class="button secondary danger" type="button" hidden>删除</button><button id="wish-owned" class="button secondary" type="button" hidden>已拥有 · 查看</button>
+        <button id="wish-download" class="button secondary" type="button" hidden><span data-icon="download"></span><span>去下载</span></button><button class="button" type="submit">保存</button></div>
+    </form>
   </dialog>
 
   <dialog id="tree-dialog" class="sheet tree">
@@ -71,17 +92,5 @@
     <button id="logout" class="button secondary" hidden>退出登录</button>
   </dialog>
 
-  <dialog id="login-dialog" class="sheet narrow">
-    <form id="login-form" class="stack">
-      <h2>登录 Plexus</h2>
-      <p id="login-message" class="muted"></p>
-      <label id="login-server-field" hidden>Plexus 后台地址<input id="login-server" type="url" placeholder="https://…ts.net"></label>
-      <label>访问密码<input id="login-password" type="password" autocomplete="current-password" required></label>
-      <button class="button" type="submit">登录</button>
-      <button id="login-change-server" class="text-button" type="button" hidden>更换后台地址</button>
-    </form>
-  </dialog>
-
-  <div id="toast" class="toast" role="status" hidden></div>
 </body>
 </html>

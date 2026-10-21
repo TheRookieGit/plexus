@@ -18,6 +18,9 @@ from http.server import BaseHTTPRequestHandler
 
 from app_runtime import bind_server, runtime_identity
 from catalog import Catalog
+from deleter import Deleter
+from disk import norm
+from wishlist import Wishlist
 from media_tree import MediaTree
 from plex import DEFAULT_URL, Plex, PlexError
 from platform_utils import reveal_in_explorer
@@ -26,6 +29,7 @@ from remote_access import RemoteAccess, SESSION_DAYS, LOCAL_HOSTS, is_loopback, 
 BASE = Path(__file__).resolve().parent
 PORT = 8766
 SYNC_SECONDS = 300
+POSTER_HOSTS = {'image.tmdb.org','metadata-static.plex.tv','images.plex.tv'}
 
 
 class UserError(Exception):
@@ -42,6 +46,7 @@ class Library:
         self.sync_lock = threading.Lock()
         self.wake = threading.Event()
         self.sync_state = {'running':False,'phase':'','error':'','last_sync':None,'server':None}
+        self.deleted = {}  # Recently deleted paths, so the catalog does not call them lost before Plex catches up.
         with self.db() as db:
             db.executescript('''
             PRAGMA journal_mode=WAL;
@@ -50,6 +55,8 @@ class Library:
         self.catalog = Catalog(self)
         self.tree = MediaTree(self)
         self.access = RemoteAccess(self)
+        self.deleter = Deleter(self)
+        self.wishlist = Wishlist(self)
 
     @contextmanager
     def db(self):
@@ -65,6 +72,18 @@ class Library:
         with self.db() as db:
             row = db.execute('SELECT value FROM settings WHERE key=?',(key,)).fetchone()
         return row[0] if row else default
+
+    def forget_paths(self,paths):
+        now = time.time()
+        self.deleted = {k:v for k,v in self.deleted.items() if v>now}|{norm(p):now+1800 for p in paths}
+        with self.db() as db:
+            gone = [(row[0],) for row in db.execute('SELECT norm FROM files') if self.recently_deleted(row[0])]
+            db.executemany('DELETE FROM files WHERE norm=?',gone)
+        self.tree.invalidate()
+
+    def recently_deleted(self,key):
+        now = time.time()
+        return any(v>now and (key==k or key.startswith(k+'\\')) for k,v in self.deleted.items())
 
     def plex(self):
         """Tests replace this."""
@@ -100,10 +119,15 @@ class Library:
         return {'sync':dict(self.sync_state),'stats':self.catalog.stats(),'sections':self.catalog.sections(),
                 'plex_url':self.setting('plex_url',DEFAULT_URL)}
 
-    def poster(self,item_id,width):
-        """A Plex poster, resized by Plex and cached here so later pages load without asking Plex again."""
+    def poster(self,item_id,width,url=''):
+        """A poster resized by Plex and cached here so later pages load without asking Plex again.
+        Wishlist entries and search results have posters from Plex's online catalog, which Plex's transcoder also fetches."""
         width = 600 if width>300 else 300
-        thumb = self.catalog.thumb(item_id)
+        if url:
+            if urllib.parse.urlsplit(url).hostname not in POSTER_HOSTS:raise UserError('不支持的海报地址。')
+            thumb = url
+        else:
+            thumb = self.wishlist.thumb(item_id[5:]) if item_id.startswith('wish:') else self.catalog.thumb(item_id)
         cached = self.data_dir/'posters'/f'{hashlib.sha1(f"{thumb}|{width}".encode()).hexdigest()}.jpg'
         if not cached.exists():
             data = self.plex().image(thumb,width,width*3//2)
@@ -131,7 +155,7 @@ class Library:
 
 class Handler(BaseHTTPRequestHandler):
     server_version = 'Plexus/0.1'
-    STATIC = {'/':'web/index.html',**{f'/{name}':f'web/{name}' for name in ('app.js','tree.js','style.css','favicon.svg')}}
+    STATIC = {'/':'web/index.html',**{f'/{name}':f'web/{name}' for name in ('downloads.html','common.js','app.js','tree.js','downloads.js','style.css','favicon.svg')}}
     PUBLIC_API = {'/api/session','/api/login'}
     # These act on the Windows machine itself, so other computers may not call them.
     LOCAL_ONLY = {'/api/runtime/reload','/api/app/show','/api/reveal','/api/access/password','/api/settings'}
@@ -228,9 +252,12 @@ class Handler(BaseHTTPRequestHandler):
             if url.path=='/api/status':return self.json(self.lib.status())
             if url.path=='/api/items':return self.json(self.lib.catalog.listing(query))
             if url.path=='/api/item':return self.json(self.lib.catalog.item(query['id']))
+            if url.path=='/api/deletions':return self.json({'items':self.lib.deleter.history()})
             if url.path=='/api/tree':return self.json(self.lib.tree.node(json.loads(query.get('path','[]'))))
             if url.path=='/api/poster':
-                return self.send_content(200,'image/jpeg',self.lib.poster(query['id'],int(query.get('w') or 300)),{'Cache-Control':'private, max-age=86400'})
+                return self.send_content(200,'image/jpeg',self.lib.poster(query.get('id',''),int(query.get('w') or 300),query.get('url','')),{'Cache-Control':'private, max-age=86400'})
+            if url.path=='/api/wishlist':return self.json(self.lib.wishlist.items())
+            if url.path=='/api/search':return self.json(self.lib.wishlist.search(query.get('q',''),query.get('kind','')))
             if url.path in self.STATIC:
                 path = BASE/self.STATIC[url.path]
                 return self.send_content(200,(mimetypes.guess_type(path.name)[0] or 'text/plain')+'; charset=utf-8',path.read_bytes(),
@@ -268,6 +295,11 @@ class Handler(BaseHTTPRequestHandler):
                 self.json({'ok':True})
                 threading.Thread(target=self.server.shutdown,daemon=True).start()
                 return
+            if self.path=='/api/delete/preview':return self.json(self.lib.deleter.preview(data))
+            if self.path=='/api/delete/confirm':return self.json(self.lib.deleter.confirm(data.get('token')))
+            if self.path=='/api/favorite':return self.json(self.lib.wishlist.favorite(str(data['id']),bool(data.get('on'))))
+            if self.path=='/api/wishlist/save':return self.json(self.lib.wishlist.save(data))
+            if self.path=='/api/wishlist/delete':return self.json(self.lib.wishlist.delete(data.get('id')))
             if self.path=='/api/sync':return self.json({'started':self.lib.start_sync()})
             if self.path=='/api/settings':return self.json(self.lib.settings(data))
             if self.path=='/api/reveal':return self.json(self.lib.reveal(str(data.get('path',''))))
