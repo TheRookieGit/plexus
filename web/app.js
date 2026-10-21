@@ -25,6 +25,8 @@ function renderStatus(status){
     (state.issue&&state.view==='library'?`<button role="tab" aria-selected="true" data-clear-issue>${escapeHTML(ISSUES[state.issue])}<small>×</small></button>`:'');
   const drive=$('#drive-filter');const chosen=drive.value;
   drive.innerHTML='<option value="">全部硬盘</option>'+s.drives.map(d=>`<option value="${escapeHTML(d.drive)}">${escapeHTML(d.drive)} 盘</option>`).join('');drive.value=chosen;
+  const pending=(status.downloads?.active||0)+(status.downloads?.review||0);$('#downloads-count').hidden=!pending;$('#downloads-count').textContent=pending;
+  $('#downloads-link').title=status.downloads?.review?`${status.downloads.review} 个下载等你确认名称`:'从网盘链接下载，查看下载进度';
   $('.filter-controls').hidden=state.view!=='library';$('#wish-add').hidden=state.view!=='wishlist';
 }
 let statusTimer;

@@ -20,6 +20,8 @@ from app_runtime import bind_server, runtime_identity
 from catalog import Catalog
 from deleter import Deleter
 from disk import norm
+from downloads import Downloads
+from netdisk import NetDisk, NetDiskError
 from wishlist import Wishlist
 from media_tree import MediaTree
 from plex import DEFAULT_URL, Plex, PlexError
@@ -29,7 +31,7 @@ from remote_access import RemoteAccess, SESSION_DAYS, LOCAL_HOSTS, is_loopback, 
 BASE = Path(__file__).resolve().parent
 PORT = 8766
 SYNC_SECONDS = 300
-POSTER_HOSTS = {'image.tmdb.org','metadata-static.plex.tv','images.plex.tv'}
+POSTER_HOSTS = {'image.tmdb.org','metadata-static.plex.tv','images.plex.tv','provider-static.plex.tv','m.media-amazon.com','artworks.thetvdb.com'}
 
 
 class UserError(Exception):
@@ -57,6 +59,8 @@ class Library:
         self.access = RemoteAccess(self)
         self.deleter = Deleter(self)
         self.wishlist = Wishlist(self)
+        self.netdisk = NetDisk(self)
+        self.downloads = Downloads(self)
 
     @contextmanager
     def db(self):
@@ -116,7 +120,7 @@ class Library:
             self.start_sync()
 
     def status(self):
-        return {'sync':dict(self.sync_state),'stats':self.catalog.stats(),'sections':self.catalog.sections(),
+        return {'sync':dict(self.sync_state),'stats':self.catalog.stats(),'sections':self.catalog.sections(),'downloads':self.downloads.summary(),
                 'plex_url':self.setting('plex_url',DEFAULT_URL)}
 
     def poster(self,item_id,width,url=''):
@@ -256,6 +260,8 @@ class Handler(BaseHTTPRequestHandler):
             if url.path=='/api/tree':return self.json(self.lib.tree.node(json.loads(query.get('path','[]'))))
             if url.path=='/api/poster':
                 return self.send_content(200,'image/jpeg',self.lib.poster(query.get('id',''),int(query.get('w') or 300),query.get('url','')),{'Cache-Control':'private, max-age=86400'})
+            if url.path=='/api/downloads':return self.json(self.lib.downloads.listing())
+            if url.path=='/api/netdisk':return self.json(self.lib.netdisk.status())
             if url.path=='/api/wishlist':return self.json(self.lib.wishlist.items())
             if url.path=='/api/search':return self.json(self.lib.wishlist.search(query.get('q',''),query.get('kind','')))
             if url.path in self.STATIC:
@@ -265,6 +271,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.json({'error':'Not found'},404)
         except (BrokenPipeError,ConnectionResetError,ConnectionAbortedError):pass
         except PlexError as exc:self.json({'error':str(exc)},502)
+        except NetDiskError as exc:self.json({'error':str(exc),'netdisk_login':exc.login},400)
         except (UserError,OSError,ValueError,KeyError) as exc:self.json({'error':str(exc).strip("'")},400)
 
     def do_POST(self):
@@ -297,6 +304,14 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if self.path=='/api/delete/preview':return self.json(self.lib.deleter.preview(data))
             if self.path=='/api/delete/confirm':return self.json(self.lib.deleter.confirm(data.get('token')))
+            # Quark and Baidu share links: sign in by QR code once, then queue downloads into a library folder.
+            if self.path=='/api/netdisk/login':return self.json(self.lib.netdisk.drive(str(data.get('drive',''))).login())
+            if self.path=='/api/netdisk/logout':return self.json(self.lib.netdisk.drive(str(data.get('drive',''))).logout())
+            if self.path=='/api/downloads/resolve':return self.json(self.lib.downloads.resolve(str(data.get('text',''))[:20000]))
+            if self.path=='/api/downloads/add':return self.json(self.lib.downloads.add(data.get('token'),data.get('files') or [],str(data.get('location',''))))
+            if self.path=='/api/downloads/control':return self.json(self.lib.downloads.control(data))
+            if self.path=='/api/downloads/identify':return self.json(self.lib.downloads.identify(data))
+            if self.path=='/api/downloads/apply':return self.json(self.lib.downloads.apply(str(data.get('id','')),bool(data.get('rename',True))))
             if self.path=='/api/favorite':return self.json(self.lib.wishlist.favorite(str(data['id']),bool(data.get('on'))))
             if self.path=='/api/wishlist/save':return self.json(self.lib.wishlist.save(data))
             if self.path=='/api/wishlist/delete':return self.json(self.lib.wishlist.delete(data.get('id')))
@@ -306,6 +321,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.json({'error':'Not found'},404)
         except (BrokenPipeError,ConnectionResetError,ConnectionAbortedError):pass
         except PlexError as exc:self.json({'error':str(exc)},502)
+        except NetDiskError as exc:self.json({'error':str(exc),'netdisk_login':exc.login},400)
         except (UserError,OSError,ValueError,KeyError,TypeError) as exc:self.json({'error':str(exc).strip("'")},400)
 
 
@@ -341,6 +357,7 @@ def start(args):
     server.lan = args.lan
     server.allowed_origins = {o.rstrip('/') for o in args.allow_origin}
     lib.start_sync()
+    lib.downloads.start()
     threading.Thread(target=lib.auto_sync,daemon=True).start()
     return server
 

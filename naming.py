@@ -98,14 +98,25 @@ def rank(results,title,year=None):
     return sorted(results,key=score)
 
 
-def guess(names):
-    """What a download most likely is, from its folder and file names: {title, year, kind}."""
-    videos = [n for n in names if kind_of(n)=='video']
-    numbered = sum(1 for n in videos if episode_of(ntpath.basename(n))[1] is not None)
+def guess(names,hint=''):
+    """What a download most likely is, from its folder and file names: {title, year, kind}.
+    The folder holding the videos names a show; a movie's own file name wins when it carries the year."""
+    videos = [n.replace('\\','/') for n in names if kind_of(n)=='video']
+    numbered = sum(1 for n in videos if episode_of(n.rsplit('/',1)[-1])[1] is not None)
     kind = 'show' if len(videos)>1 and numbered>=max(2,len(videos)//2) else 'movie'
-    top = sorted({n.replace('\\','/').split('/')[0] for n in names if '/' in n.replace('\\','/')})
-    source = top[0] if len(top)==1 else ntpath.basename(max(videos or names,key=len)) if names else ''
-    title,year = guess_title(source)
+    # The deepest folder holding every video, above any season folders.
+    common = []
+    for parts in zip(*[v.split('/')[:-1] for v in videos]) if videos else []:
+        if len(set(parts))!=1:break
+        common.append(parts[0])
+    folder = '/'.join(common)
+    while folder and season_of(folder.rsplit('/',1)[-1]) is not None:
+        folder = folder.rsplit('/',1)[0] if '/' in folder else ''
+    folder_name = folder.rsplit('/',1)[-1] if folder else ''
+    file_name = videos[0].rsplit('/',1)[-1] if videos else (names[0].rsplit('/',1)[-1] if names else '')
+    options = [n for n in (file_name if kind=='movie' else '',folder_name,hint,file_name) if n]
+    dated = [n for n in options if guess_title(n)[1]]
+    title,year = guess_title(dated[0] if dated else options[0] if options else '')
     title = re.split(r'[ ._-]+(?:S\d{1,2}|Season|第[\d一二三四五六七八九十]+季)',title,flags=re.I)[0].strip() or title
     return {'title':title,'year':year,'kind':kind}
 
