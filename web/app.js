@@ -205,12 +205,29 @@ $('#settings-button').onclick=()=>{const status=state.status;const server=status
   $('#plex-url').value=status?.plex_url||'';$('#plex-info').textContent=server?`已连接 ${server.name||'Plex Media Server'}，版本 ${server.version.split('-')[0]}。`:status?.sync.error||'尚未连接。';
   $('#password-info').textContent=session.password_set?'已设置访问密码。设置新密码后，所有设备都需要重新登录。':'还没有设置访问密码。设置后，其他设备和网页版才能登录。';
   $('#plex-form').hidden=$('#password-form').hidden=!session.local;$('#remote-only').hidden=session.local;$('#logout').hidden=session.local||!store.get('plexus-token');
-  $('#settings-dialog').showModal();};
+  $('#settings-dialog').showModal();renderHub();};
+// The wish hub (心愿中枢): connect with a pairing code made in the hub; the wishlist then follows the hub's movies and series.
+async function renderHub(){
+  try{const hub=await api('/api/hub');
+    $('#hub-status').textContent=hub.paired?`已连接 · 想看清单来自心愿中枢（${number(hub.wishes)} 部）${hub.queued?` · ${number(hub.queued)} 项等联网后发送`:''}${hub.error?' · '+hub.error:''}`:'还没有连接。';
+    $('#hub-token-row').hidden=$('#hub-connect').hidden=hub.paired;$('#hub-disconnect').hidden=!hub.paired;
+  }catch(error){$('#hub-status').textContent=error.message;}
+}
+$('#hub-form').onsubmit=async event=>{event.preventDefault();
+  try{await api('/api/hub/pair',{token:$('#hub-token').value});$('#hub-token').value='';toast('已连接心愿中枢。');renderHub();loadWishes();}catch(error){$('#hub-status').textContent=error.message;}};
+$('#hub-disconnect').onclick=async()=>{const button=$('#hub-disconnect');
+  if(!button.classList.contains('armed')){button.classList.add('armed');button.textContent='再点一次确认断开';setTimeout(()=>{if(button.isConnected){button.classList.remove('armed');button.textContent='断开连接';}},4000);return;}
+  button.classList.remove('armed');button.textContent='断开连接';
+  try{await api('/api/hub/unpair',{});toast('已断开心愿中枢。');renderHub();loadWishes();}catch(error){onError(error);}};
+// The hub's 「查看」 opens an owned title here as #item=<id>.
+function openHashItem(){const match=location.hash.match(/^#item=(.+)$/);if(!match)return;history.replaceState(null,'',location.pathname+location.search);
+  try{openDetail(decodeURIComponent(match[1]));}catch{}}
+window.addEventListener('hashchange',openHashItem);
 $('#plex-form').onsubmit=async event=>{event.preventDefault();try{await api('/api/settings',{plex_url:$('#plex-url').value.trim()});$('#settings-dialog').close();toast('已保存，正在重新同步。');loadStatus();}catch(error){onError(error);}};
 $('#password-form').onsubmit=async event=>{event.preventDefault();try{await api('/api/access/password',{password:$('#password').value});$('#password').value='';session.password_set=true;$('#settings-dialog').close();toast('访问密码已设置。');}catch(error){onError(error);}};
 $('#logout').onclick=async()=>{try{await api('/api/logout',{});}catch{}store.set('plexus-token','');location.reload();};
 
 startPage(async()=>{
   try{await loadStatus();}catch(error){onError(error);}
-  loadItems();loadWishes();
+  loadItems();loadWishes();openHashItem();
 });

@@ -90,6 +90,14 @@
       <label>访问密码<input id="password" type="password" minlength="6" autocomplete="new-password" placeholder="至少 6 个字符"></label>
       <button class="button" type="submit">设置访问密码</button>
     </form>
+    <form id="hub-form" class="stack">
+      <h3>心愿中枢</h3>
+      <p class="muted">连接后，想看清单和心愿中枢（我的心愿单网站）的电影、电视剧同步：在中枢记下的会出现在这里，Plex 里有了的会在中枢标成「已拥有」。配对码在中枢的「设置 → 已配对的设备」里生成；断开后回到连接前的想看清单。收藏不受影响。</p>
+      <p id="hub-status" class="muted" role="status"></p>
+      <label id="hub-token-row">配对码<input id="hub-token" placeholder="mch_ 开头" autocomplete="off" spellcheck="false"></label>
+      <button id="hub-connect" class="button" type="submit">连接心愿中枢</button>
+      <button id="hub-disconnect" class="button secondary" type="button" hidden>断开连接</button>
+    </form>
     <p id="remote-only" class="muted" hidden>Plex 地址和访问密码只能在运行 Plex 的 Windows 电脑上修改。</p>
     <button id="logout" class="button secondary" hidden>退出登录</button>
   </dialog>

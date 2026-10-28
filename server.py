@@ -108,6 +108,8 @@ class Library:
             result = self.catalog.sync(self.plex(),lambda phase:self.sync_state.update(phase=phase))
             self.tree.invalidate()
             self.sync_state.update(server=result['server'],last_sync=time.time())
+            # What Plex now has goes to the wish hub; queued while the hub cannot be reached.
+            self.wishlist.refresh()
         except PlexError as exc:
             self.sync_state['error'] = str(exc)
         except Exception as exc:  # A failed sync must not stop the next one.
@@ -266,6 +268,7 @@ class Handler(BaseHTTPRequestHandler):
             if url.path=='/api/downloads':return self.json(self.lib.downloads.listing())
             if url.path=='/api/netdisk':return self.json(self.lib.netdisk.status())
             if url.path=='/api/wishlist':return self.json(self.lib.wishlist.items())
+            if url.path=='/api/hub':return self.json(self.lib.wishlist.hub_status())
             if url.path=='/api/search':return self.json(self.lib.wishlist.search(query.get('q',''),query.get('kind','')))
             if url.path in self.STATIC:
                 path = BASE/self.STATIC[url.path]
@@ -319,6 +322,8 @@ class Handler(BaseHTTPRequestHandler):
             if self.path=='/api/favorite':return self.json(self.lib.wishlist.favorite(str(data['id']),bool(data.get('on'))))
             if self.path=='/api/wishlist/save':return self.json(self.lib.wishlist.save(data))
             if self.path=='/api/wishlist/delete':return self.json(self.lib.wishlist.delete(data.get('id')))
+            if self.path=='/api/hub/pair':return self.json(self.lib.wishlist.pair(str(data.get('token',''))))
+            if self.path=='/api/hub/unpair':return self.json(self.lib.wishlist.unpair())
             if self.path=='/api/sync':return self.json({'started':self.lib.start_sync()})
             if self.path=='/api/settings':return self.json(self.lib.settings(data))
             if self.path=='/api/reveal':return self.json(self.lib.reveal(str(data.get('path',''))))

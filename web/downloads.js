@@ -193,9 +193,16 @@ $('#queue').onclick=async event=>{
 };
 $('#queue').addEventListener('keydown',event=>{if(event.key==='Enter'&&event.target.matches('.review input')){event.preventDefault();event.target.closest('.review').querySelector('[data-reidentify]').click();}});
 
-startPage(()=>{
-  // Links sent over from a wishlist entry on this device.
+// Links sent over from a wishlist entry on this device, or from the wish hub's 「送到 Plexus 下载」 as #links=
+// (after the #, so they are never sent to a server, and taken out of the address at once).
+function takeHandedLinks(){
   let handed='';try{handed=sessionStorage.getItem('plexus-paste')||'';sessionStorage.removeItem('plexus-paste');}catch{}
-  if(handed){$('#paste').value=handed;readLinks();}
+  const match=location.hash.match(/^#links=([\s\S]*)$/);
+  if(match){history.replaceState(null,'',location.pathname+location.search);try{handed=decodeURIComponent(match[1]);}catch{}}
+  if(handed.trim()){$('#paste').value=handed.trim();readLinks();}
+}
+window.addEventListener('hashchange',takeHandedLinks);
+startPage(()=>{
+  takeHandedLinks();
   loadQueue();
 });
