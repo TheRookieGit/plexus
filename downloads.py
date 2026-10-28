@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS dl_files (
 CREATE INDEX IF NOT EXISTS dl_files_batch ON dl_files(batch_id);
 '''
 FINISHED = {'done','failed','canceled'}
+WAIT_LOGIN = ' 重新登录后会从断点继续。'
 
 
 class Stopped(Exception):
@@ -98,19 +99,22 @@ class Downloads:
     def tick(self):
         """Start whatever can start now: saving queued batches, downloading saved files, and reviewing finished batches."""
         with self.lib.db() as db:
-            queued = [r[0] for r in db.execute("SELECT id FROM dl_batches WHERE state='queued' ORDER BY created")]
-            ready = [dict(r) for r in db.execute('''SELECT f.* FROM dl_files f JOIN dl_batches b ON b.id=f.batch_id
+            queued = [dict(r) for r in db.execute("SELECT id,drive FROM dl_batches WHERE state='queued' ORDER BY created")]
+            ready = [dict(r) for r in db.execute('''SELECT f.*,b.drive FROM dl_files f JOIN dl_batches b ON b.id=f.batch_id
                      WHERE f.state='ready' AND b.state='downloading' ORDER BY b.created,f.position''')]
             downloading = [r[0] for r in db.execute("SELECT id FROM dl_batches WHERE state='downloading'")]
+        # Work for a drive that is signed out (here or in another app) waits; signing in again anywhere resumes it.
+        signed = {key:drive.signed_in for key,drive in self.lib.netdisk.drives.items()}
         with self.lock:
-            for batch_id in queued:
-                if batch_id not in self.saving:
+            for batch in queued:
+                batch_id = batch['id']
+                if signed.get(batch['drive']) and batch_id not in self.saving:
                     self.saving.add(batch_id)
                     self._run(self._save,batch_id)
             now = time.time()
             for row in ready:
                 if len(self.active)>=SLOTS:break
-                if row['id'] in self.active or self.retry_at.get(row['id'],0)>now:continue
+                if row['id'] in self.active or self.retry_at.get(row['id'],0)>now or not signed.get(row['drive']):continue
                 self.active[row['id']] = True
                 self._run(self._download,row['id'])
         for batch_id in downloading:
@@ -236,7 +240,9 @@ class Downloads:
                     else:self.update_file(item['_id'],state='ready',ref=json.dumps(ref))
             self.update_batch(batch_id,state='downloading')
         except NetDiskError as exc:
-            self.update_batch(batch_id,state='failed',error=str(exc)+(' 登录后点「重试」。' if exc.login else ''))
+            # A lapsed sign-in is not the batch's fault: it waits, queued, until the drive is signed in again.
+            if exc.login:self.update_batch(batch_id,state='queued',error=str(exc)+WAIT_LOGIN)
+            else:self.update_batch(batch_id,state='failed',error=str(exc))
         except (KeyError,TypeError,ValueError,AttributeError):
             self.update_batch(batch_id,state='failed',error='网盘的接口可能变了，没能转存。')
         finally:
@@ -288,7 +294,9 @@ class Downloads:
         except Stopped:
             pass  # The pause or cancel already recorded the new state.
         except NetDiskError as exc:
-            self._failed(file_id,str(exc),retry=not exc.login)
+            # A lapsed sign-in keeps the file ready, with what arrived so far, until the drive is signed in again.
+            if exc.login:self.update_file(file_id,state='ready',error=str(exc)+WAIT_LOGIN)
+            else:self._failed(file_id,str(exc),retry=True)
         except OSError as exc:
             self._failed(file_id,f'写入硬盘失败：{exc.strerror or exc}',retry=False)
         except (KeyError,TypeError,ValueError,AttributeError):
@@ -490,10 +498,12 @@ class Downloads:
             if f['state']=='downloading' and self.speed.get(f['id']):f['done'] = self.speed[f['id']][-1][1]
             f['retry_in'] = max(0,int(self.retry_at.get(f['id'],0)-time.time())) if f['state']=='ready' and f['error'] else 0
         identity = json.loads(batch['identity'])
+        drive = self.lib.netdisk.drive(batch['drive'])
         result = {k:batch[k] for k in ('id','created','drive','title','location','section','kind','state','error','finished')}
         result |= {'files':files,'identity':identity,'plan':json.loads(batch['plan']),'size':sum(f['size'] for f in files),
-                   'done':sum(f['done'] for f in files if f['state']!='canceled'),'speed':sum(f['speed'] for f in files),
-                   'label':self.lib.netdisk.drive(batch['drive']).label}
+                   'done':sum(f['done'] for f in files if f['state']!='canceled'),'speed':sum(f['speed'] for f in files),'label':drive.label,
+                   # Waiting for a sign-in: still queued or downloading, but its drive is signed out.
+                   'login':drive.key if batch['state'] in {'queued','downloading'} and not drive.signed_in else ''}
         return result
 
     def listing(self):

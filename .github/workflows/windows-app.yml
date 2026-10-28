@@ -4,7 +4,7 @@ name: Build Windows app
 on:
   push:
     branches: [main]
-    paths: ['*.py', 'web/**', 'assets/**', 'tests/**', 'requirements-app.txt', '.github/workflows/windows-app.yml']
+    paths: ['*.py', 'web/**', 'assets/**', 'tests/**', 'vendor/**', 'requirements-app.txt', '.github/workflows/windows-app.yml']
   workflow_dispatch:
 
 permissions:
@@ -19,6 +19,9 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        # The netdisk code shared with 书屿 comes from the my-collections submodule.
+        with:
+          submodules: true
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -37,7 +40,7 @@ jobs:
         run: '@{ sha = $env:GITHUB_SHA } | ConvertTo-Json | Set-Content -Encoding utf8 build_info.json'
       - name: Build
         run: >
-          pyinstaller --noconfirm --clean --windowed --name Plexus
+          pyinstaller --noconfirm --clean --windowed --name Plexus --paths vendor/my-collections
           --icon assets/plexus.ico --add-data "web;web" --add-data "assets/plexus.ico;assets" --add-data "build_info.json;."
           desktop_app.py
       # There is no Plex Media Server on the build machine, so the check is that the service starts and answers.

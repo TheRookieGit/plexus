@@ -12,7 +12,7 @@ const qrSVG=rows=>`<svg viewBox="-4 -4 ${rows.length+8} ${rows.length+8}" role="
 
 // Drive sign-in ------------------------------------------------------------------------------------------------------
 function renderAccounts(){
-  $('#accounts').innerHTML=Object.entries(dl.netdisk).map(([key,d])=>`<span class="account"><span class="dot${d.signed_in?' on':''}"></span>${escapeHTML(d.label)}${d.signed_in?`<small>${escapeHTML(d.name||'已登录')}</small><button class="text-button" data-logout="${key}">退出</button>`:`<button class="text-button" data-login="${key}">扫码登录</button>`}</span>`).join('');
+  $('#accounts').innerHTML=Object.entries(dl.netdisk).map(([key,d])=>`<span class="account"><span class="dot${d.signed_in?' on':''}"></span>${escapeHTML(d.label)}${d.signed_in?`<small>${escapeHTML(d.name||'已登录')}</small><button class="text-button" data-logout="${key}" title="登录在 Plexus 和书屿之间共用">退出</button>`:`<button class="text-button" data-login="${key}">扫码登录</button>`}</span>`).join('');
 }
 function renderLogin(drive){
   const login=drive.login||{},shown=['waiting','scanned'].includes(login.state),key=login.link||login.image||'';
@@ -37,7 +37,11 @@ async function pollLogin(){
 $('#accounts').onclick=async event=>{
   const login=event.target.closest('[data-login]'),logout=event.target.closest('[data-logout]');
   if(login)signIn(login.dataset.login);
-  if(logout)try{await api('/api/netdisk/logout',{drive:logout.dataset.logout});dl.netdisk=(await api('/api/netdisk'));renderAccounts();}catch(error){onError(error);}
+  if(logout){
+    // The sign-in is shared, so signing out here signs out of 书屿 and the wish hub as well: a second click confirms.
+    if(!logout.classList.contains('armed')){const label=dl.netdisk[logout.dataset.logout]?.label||'网盘';logout.classList.add('armed');logout.textContent=`会同时退出书屿和心愿中枢里的${label}，再点一次确认`;
+      setTimeout(()=>{if(logout.isConnected){logout.classList.remove('armed');logout.textContent='退出';}},4000);return;}
+    try{await api('/api/netdisk/logout',{drive:logout.dataset.logout});dl.netdisk=(await api('/api/netdisk'));renderAccounts();}catch(error){onError(error);}}
 };
 $('#drive-login-retry').onclick=()=>signIn(dl.signing);
 $('#login-drive-dialog').addEventListener('close',()=>clearTimeout(dl.loginTimer));
@@ -107,11 +111,12 @@ function batchHTML(b){
   const tools=[live&&b.files.some(f=>['ready','downloading'].includes(f.state))&&`<button class="button secondary small" data-action="pause">${icon('pause')}<span>全部暂停</span></button>`,
     live&&counts.paused&&`<button class="button secondary small" data-action="resume">${icon('play')}<span>全部继续</span></button>`,
     (b.state==='failed'||counts.failed)&&!['done','canceled'].includes(b.state)&&`<button class="button secondary small" data-action="retry">${icon('refresh')}<span>重试失败的</span></button>`,
+    b.login&&`<button class="button secondary small" data-login="${b.login}">${icon('link')}<span>扫码登录${escapeHTML(b.label)}</span></button>`,
     !['done','canceled','applying'].includes(b.state)&&`<button class="button secondary small danger" data-action="cancel">${icon('close')}<span>取消</span></button>`,
     ['done','canceled','failed'].includes(b.state)&&`<button class="button secondary small" data-action="remove">${icon('trash')}<span>删除记录</span></button>`].filter(Boolean).join('');
   const done=b.state==='done'?`<p class="muted">已放入：${[...new Set(b.plan.map(p=>relative(p.target,b.location).split('\\')[0]))].map(escapeHTML).join('、')}。Plex 会自动扫描。</p>`:'';
   return `<article class="batch ${b.state}" data-batch="${b.id}"><div class="batch-head"><div class="batch-title"><strong>${escapeHTML(b.identity?.title&&b.state==='done'?b.identity.title:b.title||'下载')}</strong>
-    <small>${escapeHTML(b.label)} · ${b.files.length} 个文件 · ${sizeText(b.size)} → ${escapeHTML(b.location)}</small></div><span class="state-badge ${b.state}">${STATES[b.state]||b.state}</span></div>
+    <small>${escapeHTML(b.label)} · ${b.files.length} 个文件 · ${sizeText(b.size)} → ${escapeHTML(b.location)}</small></div><span class="state-badge ${b.state}">${b.login?`等待登录${escapeHTML(b.label)}`:STATES[b.state]||b.state}</span></div>
     ${live||b.state==='review'?`<div class="bar big"><span style="width:${percent(b.done,b.size).toFixed(1)}%"></span></div><p class="batch-progress muted">${sizeText(b.done)} / ${sizeText(b.size)}${b.speed?` · ${speedText(b.speed)} · ${etaText(left,b.speed)}`:''}</p>`:''}
     ${b.error?`<p class="error-text">${escapeHTML(b.error)}</p>`:''}${done}
     ${b.state==='review'?reviewHTML(b):''}
@@ -119,7 +124,7 @@ function batchHTML(b){
     <div class="batch-tools">${tools}</div></article>`;
 }
 // A card is rebuilt only when what it shows changes shape, so typing in the review form is never interrupted.
-const shape=b=>JSON.stringify([b.state,b.error,b.plan,b.identity,b.files.map(f=>[f.state,f.error&&!f.retry_in])]);
+const shape=b=>JSON.stringify([b.state,b.login,b.error,b.plan,b.identity,b.files.map(f=>[f.state,f.error&&!f.retry_in])]);
 function renderQueue(){
   const queue=$('#queue');
   if(!dl.batches.length){queue.innerHTML='<p class="empty">还没有下载。在上面粘贴网盘分享链接开始。</p>';dl.cards.clear();return;}
@@ -164,7 +169,8 @@ function reviewData(card){
 }
 $('#queue').onclick=async event=>{
   const card=event.target.closest('[data-batch]');if(!card)return;const id=card.dataset.batch;
-  const action=event.target.closest('[data-action]'),fileAction=event.target.closest('[data-file-action]');
+  const action=event.target.closest('[data-action]'),fileAction=event.target.closest('[data-file-action]'),login=event.target.closest('[data-login]');
+  if(login)return signIn(login.dataset.login);
   try{
     if(action){
       // Cancelling throws away what has downloaded so far, so it takes a second click.

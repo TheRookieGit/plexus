@@ -1,11 +1,15 @@
 from email.message import Message
 import json
+import os
+import tempfile
 import threading
 import time
 import unittest
 from unittest.mock import patch
 import urllib.parse
 
+from collectionkit.credentials import Credentials
+from collectionkit.secret import protect_secret
 import netdisk
 from netdisk import NetDisk, NetDiskError, links, wanted
 from tests.test_catalog import Fixture
@@ -147,10 +151,14 @@ def wait(condition,label,seconds=5):
 
 class NetDiskTests(Fixture,unittest.TestCase):
     def setUp(self):
-        super().setUp()
+        # Sign-ins are shared through a store outside the library; each test gets its own.
+        self.shared = tempfile.TemporaryDirectory()
         self.fake = FakeDrives()
-        self.patches = [patch('netdisk.fetch',side_effect=lambda request,timeout,sink=None:self.fake(request,timeout,sink)),patch('netdisk.POLL',.01)]
+        self.patches = [patch.dict(os.environ,{'COLLECTIONKIT_DIR':self.shared.name}),
+                        patch('collectionkit.netdisk.fetch',side_effect=lambda request,timeout,sink=None:self.fake(request,timeout,sink)),
+                        patch('collectionkit.netdisk.POLL',.01)]
         for item in self.patches:item.start()
+        super().setUp()
         self.lib.netdisk = NetDisk(self.lib)
         self.lib.start_sync = lambda:True
         downloads = self.lib.downloads
@@ -159,8 +167,13 @@ class NetDiskTests(Fixture,unittest.TestCase):
         downloads._tell_plex = lambda section,folders:None
 
     def tearDown(self):
-        for item in reversed(self.patches):item.stop()
         super().tearDown()
+        for item in reversed(self.patches):item.stop()
+        self.shared.cleanup()
+
+    def other_app(self):
+        """书屿 on the same computer: its own drives, the same shared sign-ins."""
+        return netdisk.Drives('书屿转存',Credentials(self.shared.name))
 
     def sign_in(self,key):
         status = self.lib.netdisk.drive(key).login()
@@ -232,6 +245,72 @@ class NetDiskTests(Fixture,unittest.TestCase):
         self.sign_in('quark')
         self.assertEqual(self.lib.netdisk.drive('quark').logout()['signed_in'],False)
         self.assertFalse(NetDisk(self.lib).drive('quark').signed_in)
+
+    def test_a_sign_in_saved_before_sharing_moves_to_the_shared_store_once(self):
+        cookies = [{'name':'__pus','value':'pus-cookie','domain':'.quark.cn','path':'/','secure':False,'expires':None}]
+        with self.lib.db() as db:
+            db.execute('INSERT OR REPLACE INTO settings VALUES (?,?)',('netdisk_quark',json.dumps({'name':'旧登录','cookies':protect_secret(json.dumps(cookies))})))
+        moved = NetDisk(self.lib)
+        self.assertTrue(moved.drive('quark').signed_in);self.assertEqual(moved.status()['quark']['name'],'旧登录')
+        self.assertTrue(self.other_app().drive('quark').signed_in,'书屿 has it too')
+        with self.lib.db() as db:self.assertTrue(db.execute("SELECT 1 FROM settings WHERE key='netdisk_quark'").fetchone(),'the old row stays for going back')
+        moved.drive('quark').logout()
+        self.assertFalse(NetDisk(self.lib).drive('quark').signed_in,'a sign-out is not undone by the old row')
+
+    def test_signing_in_or_out_in_another_app_shows_here(self):
+        shuyu = self.other_app()
+        shuyu.drive('quark').login()
+        wait(lambda:shuyu.status()['quark']['signed_in'],'signed in from 书屿')
+        self.assertEqual(self.lib.netdisk.status()['quark']['name'],'夸克用户')
+        share,batch = self.download('https://pan.quark.cn/s/qshare',self.shows)
+        self.assertEqual(batch['state'],'review',batch)
+        self.lib.netdisk.drive('quark').logout()
+        self.assertFalse(shuyu.status()['quark']['signed_in'],'signing out here signs 书屿 out too')
+
+    def test_a_download_waits_for_a_new_sign_in_and_resumes_where_it_stopped(self):
+        self.sign_in('quark')
+        shuyu = self.other_app()
+        share = self.lib.downloads.resolve('https://pan.quark.cn/s/qshare')['shares'][0]
+        batch_id = self.lib.downloads.add(share['token'],[f['index'] for f in share['files'] if f['kind']],str(self.shows))['id']
+        downloads = self.lib.downloads
+        downloads.tick()  # Saved into your drive.
+        downloads.tick()  # The episode stops 300 bytes in.
+        # 书屿 signs out meanwhile: nothing new starts, and nothing is called failed.
+        shuyu.drive('quark').logout()
+        for _ in range(3):downloads.retry_at.clear();downloads.tick()
+        batch = downloads.public(batch_id)
+        self.assertEqual((batch['state'],batch['login']),('downloading','quark'),batch)
+        self.assertNotIn('failed',[f['state'] for f in batch['files']])
+        # Signed in again in 书屿, but the drive has dropped that sign-in by the time the download asks for its link.
+        shuyu.drive('quark').login();wait(lambda:shuyu.status()['quark']['signed_in'],'signed in again from 书屿')
+        self.fake.quark_logged_in = False
+        downloads.retry_at.clear();downloads.tick()
+        batch = downloads.public(batch_id)
+        episode = next(f for f in batch['files'] if f['path'].endswith('.mkv'))
+        self.assertEqual((batch['state'],batch['login'],episode['state']),('downloading','quark','ready'),batch)
+        self.assertIn('断点',episode['error'])
+        self.assertFalse(shuyu.status()['quark']['signed_in'],'the lapsed sign-in is dropped for every app')
+        # Signing in again here picks it up from where it stopped.
+        self.fake.quark_logged_in = True
+        self.sign_in('quark')
+        for _ in range(3):downloads.retry_at.clear();downloads.tick()
+        batch = downloads.public(batch_id)
+        self.assertEqual((batch['state'],batch['login']),('review',''),batch)
+        ranges = [c['start'] for c in self.fake.calls if c['host']=='cdn.quark.test' and c['path']=='/s-f1']
+        self.assertEqual(ranges,[0,300],'the episode continues from the 300 bytes it had')
+
+    def test_saving_waits_for_a_sign_in_instead_of_failing(self):
+        self.sign_in('quark')
+        share = self.lib.downloads.resolve('https://pan.quark.cn/s/qshare')['shares'][0]
+        batch_id = self.lib.downloads.add(share['token'],[f['index'] for f in share['files'] if f['kind']],str(self.shows))['id']
+        self.fake.quark_logged_in = False
+        self.lib.downloads.tick()
+        batch = self.lib.downloads.public(batch_id)
+        self.assertEqual((batch['state'],batch['login']),('queued','quark'),batch);self.assertIn('重新登录后会从断点继续',batch['error'])
+        self.fake.quark_logged_in = True
+        self.sign_in('quark')
+        for _ in range(4):self.lib.downloads.retry_at.clear();self.lib.downloads.tick()
+        self.assertEqual(self.lib.downloads.public(batch_id)['state'],'review')
 
 
 if __name__=='__main__':

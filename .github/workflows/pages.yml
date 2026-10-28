@@ -24,6 +24,8 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
       - uses: actions/configure-pages@v5
       - run: mkdir _site && cp -r web/. _site/
       # Versioned asset URLs, so a browser never pairs new scripts with a cached old stylesheet.

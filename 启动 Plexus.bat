@@ -5,6 +5,8 @@ title Plexus
 cd /d "%~dp0"
 if errorlevel 1 goto directory_error
 
+if not exist "%~dp0vendor\my-collections\collectionkit\" goto submodule_error
+
 py -3 -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" >nul 2>&1
 if not errorlevel 1 goto use_py
 python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" >nul 2>&1
@@ -22,6 +24,12 @@ exit /b 0
 python -X utf8 "%~dp0server.py" --allow-origin https://therookiegit.github.io %*
 if errorlevel 1 goto failed
 exit /b 0
+
+:submodule_error
+echo The shared code in vendor\my-collections is missing.
+echo Run this in the application folder, then start again:
+echo     git submodule update --init
+goto failed
 
 :directory_error
 echo Cannot open the application folder: "%~dp0"

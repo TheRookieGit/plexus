@@ -16,6 +16,9 @@ import urllib.parse
 import webbrowser
 from http.server import BaseHTTPRequestHandler
 
+# Code shared with 书屿 and the wish hub: the my-collections repository, kept as a submodule.
+sys.path.insert(0,str(Path(__file__).resolve().parent/'vendor'/'my-collections'))
+
 from app_runtime import bind_server, runtime_identity
 from catalog import Catalog
 from deleter import Deleter

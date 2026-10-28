@@ -16,6 +16,8 @@ import urllib.request
 import webbrowser
 import zipfile
 
+# Before server, which imports the shared code from the my-collections submodule.
+sys.path.insert(0,str(Path(__file__).resolve().parent/'vendor'/'my-collections'))
 import server
 
 APP_NAME = 'Plexus'

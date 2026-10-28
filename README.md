@@ -17,6 +17,12 @@
 
 双击 **启动 Plexus.bat**，浏览器会打开 <http://127.0.0.1:8766>。需要 Python 3.10 或更新版本，不需要安装其他包。数据保存在项目的 `.data` 文件夹。
 
+网盘相关的代码和书屿共用，放在 [my-collections](https://github.com/TheRookieGit/my-collections) 仓库的 `collectionkit` 里，作为 git submodule 放在 `vendor/my-collections`。clone 时要加 `--recursive`；已经 clone 过的，在项目文件夹里运行一次 `git submodule update --init`（缺了这部分，启动 .bat 会提示）：
+
+```powershell
+git clone --recursive https://github.com/TheRookieGit/plexus.git
+```
+
 ```powershell
 python server.py
 python server.py --port 8767 --no-browser
@@ -51,11 +57,11 @@ python -m unittest discover -s tests -t .                        # 运行测试
 
 顶栏的 **下载** 打开下载页面。
 
-1. 第一次使用某个网盘时，在右上角点 **扫码登录**：夸克用夸克 App 扫，百度用百度网盘 App 扫，然后在手机上确认。登录信息加密保存在 Windows 电脑上。
+1. 第一次使用某个网盘时，在右上角点 **扫码登录**：夸克用夸克 App 扫，百度用百度网盘 App 扫，然后在手机上确认。登录信息加密保存在 Windows 电脑上（`%LOCALAPPDATA%\CollectionKit\netdisk.sqlite3`，不上传到任何地方）。**登录在 Plexus、书屿和心愿中枢之间共用**：在任意一处扫码登录，其他地方不用再扫；在任意一处退出，所有地方都会一起退出，所以退出要点两次确认。以前在 Plexus 里登录过的，升级后会自动沿用。
 2. 粘贴夸克或百度网盘的分享链接（提取码可以一起粘贴，`?pwd=` 也行；一次可以粘贴多个链接），点 **读取链接**。每个分享列出里面的文件：视频和字幕默认勾选，图片、文档等其他文件不下载。
 3. **选择放到哪个盘、哪个媒体库**（显示每个文件夹的剩余空间），点 **加入下载队列**。
 4. 文件先转存到你自己网盘的 `Plexus转存` 文件夹，再下载到目标盘根目录下隐藏的 `.plexus-downloads` 文件夹（不在 Plex 媒体库里，Plex 不会提前扫描到半成品）。
-5. 下载页面显示每个任务和每个文件的进度、速度和剩余时间，可以暂停、继续、取消（取消需要点两次）或重试。**断点续传**：网络中断、关闭 Plexus 或电脑重启后，会从已经下载的位置继续；出错会自动重试几次。
+5. 下载页面显示每个任务和每个文件的进度、速度和剩余时间，可以暂停、继续、取消（取消需要点两次）或重试。**断点续传**：网络中断、关闭 Plexus 或电脑重启后，会从已经下载的位置继续；出错会自动重试几次。网盘登录过期，或者在书屿里退出了网盘时，任务显示 **等待登录**，不会判为失败；在 Plexus 或书屿里重新扫码登录后，自动从断点继续。
 6. 全部下载完后，任务变成 **等你确认名称**：Plexus 在 Plex 的在线资料库里查出可能的片名，列出每个文件将被改成的名字：
    - 电影：`片名 (年份)\片名 (年份).mkv`
    - 剧集：`片名 (年份)\Season 01\片名 (年份) - S01E01.mkv`
