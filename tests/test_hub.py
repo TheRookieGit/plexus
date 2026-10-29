@@ -100,5 +100,23 @@ class HubWishlistTests(Fixture,unittest.TestCase):
         self.assertTrue(self.fake.items[added['id']][0]['deleted'])
 
 
+    def test_screenshots_come_from_the_hub_and_go_back_with_the_wish(self):
+        self.fake.images['shot-hub-1'] = 'data:image/png;base64,iVBO'
+        self.fake.add(wish('h1','截图里的片',shots=['shot-hub-1'],rating=5))
+        self.wishes.pair(self.fake.token('plexus'))
+        self.assertEqual(self.listed()['截图里的片']['shots'],['shot-hub-1'])
+        self.assertEqual(self.wishes.shot('shot-hub-1')['data'],'data:image/png;base64,iVBO')
+        added = self.wishes.add_shot('data:image/jpeg;base64,/9j/')['id']
+        self.wishes.save({'id':'h1','title':'截图里的片','kind':'movie','shots':['shot-hub-1',added]})
+        sent = self.fake.items['h1'][0]
+        self.assertEqual(sent['shots'],['shot-hub-1',added]);self.assertEqual(sent['rating'],5)
+        self.assertEqual(self.fake.images[added],'data:image/jpeg;base64,/9j/')
+        self.wishes.save({'id':'h1','title':'截图里的片','kind':'movie','shots':[added]})
+        self.assertEqual(self.fake.items['h1'][0]['shots'],[added],'removed here, removed in the hub')
+        self.wishes.save({'id':'h1','title':'改个名','kind':'movie'})
+        self.assertEqual(self.fake.items['h1'][0]['shots'],[added],'saving without shots leaves them alone')
+        self.wishes.unpair()
+        with self.assertRaises(ValueError):self.wishes.add_shot('data:image/jpeg;base64,/9j/')
+
 if __name__=='__main__':
     unittest.main()

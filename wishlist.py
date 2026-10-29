@@ -2,7 +2,8 @@
 
 Connected to the wish hub (心愿中枢, the my-collections site), the wishlist is the hub's movies and series instead:
 kept here in hub_wishes, owned as before by Plex's guid or by title and year, and each title Plex has is reported
-back so the hub shows it as owned. A match the hub marks 「不是这个」 is passed over. The wishlist kept here before
+back so the hub shows it as owned, and the hub's original screenshots of a wish can be seen, added and removed
+here. A match the hub marks 「不是这个」 is passed over. The wishlist kept here before
 connecting goes up to the hub once and stays as it was, for going back. Favourites stay here."""
 from __future__ import annotations
 
@@ -77,6 +78,7 @@ class Wishlist:
             for row in rows:
                 owned = self.owned(db,row)
                 row['owned'] = owned['id'] if owned else ''
+                row['shots'] = self.shots_of(row)
                 for key in ('data','rejected','reported'):row.pop(key,None)
         return {'items':rows,'hub':self.hub.paired}
 
@@ -89,7 +91,7 @@ class Wishlist:
         values = (wish_id,title,year,kind,str(data.get('guid',''))[:200],str(data.get('thumb',''))[:500],str(data.get('summary',''))[:600],
                   str(data.get('links','')).strip()[:5000],str(data.get('note','')).strip()[:1000])
         if self.hub.paired:
-            self.save_to_hub(values)
+            self.save_to_hub(values,data.get('shots'))
             return {'id':wish_id}
         with self.lib.db() as db:
             added = db.execute('SELECT added FROM wishlist WHERE id=?',(wish_id,)).fetchone()
@@ -121,6 +123,25 @@ class Wishlist:
 
     # The wish hub -------------------------------------------------------------------------------------------------
 
+    @staticmethod
+    def shots_of(row):
+        try:shots = json.loads(row.get('data') or '{}').get('shots')
+        except ValueError:shots = None
+        return [s for s in shots if isinstance(s,str)] if isinstance(shots,list) else []
+
+    def shot(self,shot_id):
+        """One of the hub's screenshots as a data URL; fetched from the hub the first time."""
+        try:data = self.hub.shot(str(shot_id or ''))
+        except HubError as exc:raise ValueError(str(exc)) from None
+        if not data:raise ValueError('心愿中枢里没有这张截图了。')
+        return {'data':data}
+
+    def add_shot(self,data):
+        """Keep a screenshot for a wish; its id goes in the wish's shots when the wish is saved."""
+        if not self.hub.paired:raise ValueError('连接心愿中枢后才能保存截图。')
+        try:return {'id':self.hub.add_shot(data)}
+        except HubError as exc:raise ValueError(str(exc)) from None
+
     def hub_item(self,values,item,now):
         """One wish in the hub's shape: movies as movie, series as tv; Plex's guid, poster and summary go along."""
         wish_id,title,year,kind,guid,thumb,summary,links,note = values
@@ -133,10 +154,11 @@ class Wishlist:
                     links=[links] if links else [],note=note,updatedAt=iso(now))
         return item
 
-    def save_to_hub(self,values):
+    def save_to_hub(self,values,shots=None):
         with self.lib.db() as db:
             row = db.execute('SELECT data FROM hub_wishes WHERE id=?',(values[0],)).fetchone()
         item = self.hub_item(values,json.loads(row['data']) if row else None,time.time())
+        if isinstance(shots,list):item['shots'] = [str(s)[:64] for s in shots if isinstance(s,str) and s][:30]
         with self.lib.db() as db:self.store(db,item)
         self.hub.put_wish(item)
         self.report()

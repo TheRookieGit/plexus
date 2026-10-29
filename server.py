@@ -269,6 +269,7 @@ class Handler(BaseHTTPRequestHandler):
             if url.path=='/api/netdisk':return self.json(self.lib.netdisk.status())
             if url.path=='/api/wishlist':return self.json(self.lib.wishlist.items())
             if url.path=='/api/hub':return self.json(self.lib.wishlist.hub_status())
+            if url.path=='/api/wishlist/shot':return self.json(self.lib.wishlist.shot(query.get('id','')))
             if url.path=='/api/search':return self.json(self.lib.wishlist.search(query.get('q',''),query.get('kind','')))
             if url.path in self.STATIC:
                 path = BASE/self.STATIC[url.path]
@@ -321,6 +322,7 @@ class Handler(BaseHTTPRequestHandler):
             if self.path=='/api/downloads/apply':return self.json(self.lib.downloads.apply(str(data.get('id','')),bool(data.get('rename',True))))
             if self.path=='/api/favorite':return self.json(self.lib.wishlist.favorite(str(data['id']),bool(data.get('on'))))
             if self.path=='/api/wishlist/save':return self.json(self.lib.wishlist.save(data))
+            if self.path=='/api/wishlist/shot':return self.json(self.lib.wishlist.add_shot(data.get('data')))
             if self.path=='/api/wishlist/delete':return self.json(self.lib.wishlist.delete(data.get('id')))
             if self.path=='/api/hub/pair':return self.json(self.lib.wishlist.pair(str(data.get('token',''))))
             if self.path=='/api/hub/unpair':return self.json(self.lib.wishlist.unpair())

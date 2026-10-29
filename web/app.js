@@ -167,7 +167,7 @@ $('#delete-dialog').addEventListener('click',event=>{if(event.target.closest('[d
 
 // Wishlist: titles still to get, looked up in Plex's online catalog, with the share links to download them from.
 async function loadWishes(){
-  try{state.wishes=(await api('/api/wishlist')).items;if(state.status)renderStatus(state.status);if(state.view!=='wishlist')return;
+  try{const data=await api('/api/wishlist');state.wishes=data.items;state.hub=data.hub;if(state.status)renderStatus(state.status);if(state.view!=='wishlist')return;
     const q=state.q.toLowerCase();const shown=state.wishes.filter(w=>!q||w.title.toLowerCase().includes(q));
     $('#grid').innerHTML=shown.map(w=>`<button class="card" data-wish="${escapeHTML(w.id)}">${posterHTML(w,w.thumb?'id='+encodeURIComponent('wish:'+w.id):'')}<span class="flags">${w.owned?'<span class="badge res">已拥有</span>':''}${w.links?`<span class="badge">${icon('link')}有链接</span>`:''}</span><span class="card-title">${escapeHTML(w.title)}</span><span class="card-meta">${[w.year,w.kind==='show'?'剧集':'电影',w.note].filter(Boolean).map(escapeHTML).join(' · ')}</span></button>`).join('')||`<p class="empty">${q?'没有符合条件的想看。':'还没有想看的影视。点「添加想看」，搜索片名并记下网盘链接。'}</p>`;
     observePosters($('#grid'));$('#result-count').textContent=shown.length?`共 ${number(shown.length)} 部`:'';$('#pager').hidden=true;
@@ -178,6 +178,7 @@ function openWish(id){
   const wish=state.wishes.find(w=>w.id===id)||{};wishPick={guid:wish.guid||'',thumb:wish.thumb||'',summary:wish.summary||''};
   $('#wish-title-text').textContent=wish.id?'编辑想看':'添加想看';$('#wish-id').value=wish.id||'';$('#wish-title').value=wish.title||'';$('#wish-year').value=wish.year||'';
   $('#wish-kind').value=wish.kind||'movie';$('#wish-links').value=wish.links||'';$('#wish-note').value=wish.note||'';$('#wish-results').innerHTML='';$('#wish-query').value='';
+  wishShots=[...(wish.shots||[])];$('#wish-shots-field').hidden=!state.hub;renderWishShots();
   $('#wish-delete').hidden=!wish.id;$('#wish-download').hidden=!wish.links;$('#wish-owned').hidden=!wish.owned;$('#wish-owned').dataset.open=wish.owned||'';
   $('#wish-dialog').showModal();(wish.id?$('#wish-links'):$('#wish-query')).focus();
 }
@@ -193,8 +194,34 @@ $('#wish-results').onclick=event=>{const pick=event.target.closest('[data-pick]'
   $('#wish-title').value=r.title;$('#wish-year').value=r.year||'';$('#wish-kind').value=r.kind;wishPick={guid:r.guid,thumb:r.thumb,summary:r.summary};
   $('#wish-results').innerHTML='';$('#wish-query').value='';$('#wish-links').focus();};
 $('#wish-form').onsubmit=async event=>{event.preventDefault();
-  try{await api('/api/wishlist/save',{id:$('#wish-id').value,title:$('#wish-title').value,year:$('#wish-year').value,kind:$('#wish-kind').value,links:$('#wish-links').value,note:$('#wish-note').value,...wishPick});
+  try{await api('/api/wishlist/save',{id:$('#wish-id').value,title:$('#wish-title').value,year:$('#wish-year').value,kind:$('#wish-kind').value,links:$('#wish-links').value,note:$('#wish-note').value,...wishPick,...(state.hub?{shots:wishShots}:{})});
     $('#wish-dialog').close();toast('已保存到想看。');loadWishes();}catch(error){onError(error);}};
+// Original screenshots, shared with the wish hub: shown from the hub, added here go up to it when the wish is saved.
+let wishShots=[];const shotCache=new Map();
+function renderWishShots(){
+  $('#wish-shots').innerHTML=wishShots.map(id=>`<span class="wish-shot"><img data-shot="${escapeHTML(id)}" alt="原截图"><button type="button" class="wish-shot-remove" data-remove-shot="${escapeHTML(id)}" aria-label="删掉这张截图">×</button></span>`).join('')+'<label class="wish-shot-add"><input id="wish-shot-input" type="file" accept="image/*" multiple hidden><span>＋ 添加截图</span></label>';
+  $$('#wish-shots [data-shot]').forEach(async img=>{const id=img.dataset.shot;
+    try{if(!shotCache.has(id))shotCache.set(id,(await api('/api/wishlist/shot?'+new URLSearchParams({id}))).data);img.src=shotCache.get(id);img.onclick=()=>window.open().document.write(`<img src="${shotCache.get(id)}" style="max-width:100%">`);}
+    catch(error){img.closest('.wish-shot').classList.add('missing');img.title=error.message;}});
+  $('#wish-shot-input').onchange=event=>{addWishShots([...event.target.files]);event.target.value='';};
+}
+// The same size the hub keeps: the long side at most 1600px, as JPEG.
+async function shotDataURL(file){
+  const bitmap=await createImageBitmap(file);const scale=Math.min(1,1600/Math.max(bitmap.width,bitmap.height));
+  const canvas=document.createElement('canvas');canvas.width=Math.round(bitmap.width*scale);canvas.height=Math.round(bitmap.height*scale);
+  canvas.getContext('2d').drawImage(bitmap,0,0,canvas.width,canvas.height);
+  let data=canvas.toDataURL('image/jpeg',.72);if(data.length>900000)data=canvas.toDataURL('image/jpeg',.5);return data;
+}
+async function addWishShots(files){
+  for(const file of files.filter(f=>f.type.startsWith('image/'))){
+    try{const data=await shotDataURL(file);const {id}=await api('/api/wishlist/shot',{data});shotCache.set(id,data);wishShots.push(id);}catch(error){onError(error);}
+  }
+  renderWishShots();
+}
+$('#wish-shots').addEventListener('click',event=>{const button=event.target.closest('[data-remove-shot]');if(!button)return;
+  wishShots=wishShots.filter(id=>id!==button.dataset.removeShot);renderWishShots();});
+$('#wish-dialog').addEventListener('paste',event=>{if(!state.hub)return;const files=[...(event.clipboardData?.files||[])].filter(f=>f.type.startsWith('image/'));
+  if(files.length){event.preventDefault();addWishShots(files);}});
 $('#wish-delete').onclick=async()=>{try{await api('/api/wishlist/delete',{id:$('#wish-id').value});$('#wish-dialog').close();loadWishes();}catch(error){onError(error);}};
 $('#wish-owned').onclick=()=>{$('#wish-dialog').close();openDetail($('#wish-owned').dataset.open);};
 // The download page picks the links up from this device's session, so they never travel in the address.
