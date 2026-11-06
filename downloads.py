@@ -39,16 +39,22 @@ class Stopped(Exception):
     """A download was paused or cancelled while it ran."""
 
 
+class DiskError(Exception):
+    """Writing failed. Not an OSError, so the network code cannot mistake it for a dropped connection."""
+
+
 class Sink:
     """Receives a download's bytes: writes them, counts progress, and stops when asked to."""
     def __init__(self,manager,file_id,out,done):
         self.manager,self.file_id,self.out,self.done = manager,file_id,out,done
+        self.start = done
         self.saved = time.monotonic()
 
     def write(self,chunk):
         if self.file_id in self.manager.stopping:
             raise Stopped()
-        self.out.write(chunk)
+        try:self.out.write(chunk)
+        except OSError as exc:raise DiskError(exc.strerror or str(exc)) from exc
         self.done += len(chunk)
         self.manager.progress(self.file_id,self.done)
         if time.monotonic()-self.saved>3:
@@ -264,6 +270,7 @@ class Downloads:
         return ntpath.join(root,batch['id'],*[safe(p) for p in path.split('/')])
 
     def _download(self,file_id):
+        sink = None
         try:
             with self.lib.db() as db:
                 row = dict(db.execute('SELECT * FROM dl_files WHERE id=?',(file_id,)).fetchone())
@@ -281,7 +288,8 @@ class Downloads:
                 if start>row['size']:start = 0
                 if start<row['size']:
                     with open(part,'ab' if start else 'wb') as out:
-                        status = drive.stream(json.loads(row['ref']),start,Sink(self,file_id,out,start))
+                        sink = Sink(self,file_id,out,start)
+                        status = drive.stream(json.loads(row['ref']),start,sink)
                     if status==200 and start:
                         # The drive sent the whole file instead of the rest, so the part is the start twice over: begin again.
                         os.remove(part);continue
@@ -296,7 +304,12 @@ class Downloads:
         except NetDiskError as exc:
             # A lapsed sign-in keeps the file ready, with what arrived so far, until the drive is signed in again.
             if exc.login:self.update_file(file_id,state='ready',error=str(exc)+WAIT_LOGIN)
-            else:self._failed(file_id,str(exc),retry=True)
+            else:
+                # Bytes arrived, so the drive is working: only attempts in a row that bring nothing count towards giving up.
+                if sink and sink.done>sink.start:self.update_file(file_id,done=sink.done,attempts=0)
+                self._failed(file_id,str(exc),retry=True)
+        except DiskError as exc:
+            self._failed(file_id,f'写入硬盘失败：{exc}',retry=False)
         except OSError as exc:
             self._failed(file_id,f'写入硬盘失败：{exc.strerror or exc}',retry=False)
         except (KeyError,TypeError,ValueError,AttributeError):

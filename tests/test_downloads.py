@@ -1,6 +1,7 @@
 from pathlib import Path
 import unittest
 
+from downloads import ATTEMPTS, DiskError
 from naming import episode_of, plan
 from netdisk import Unreachable
 from tests.test_catalog import Fixture
@@ -95,6 +96,45 @@ class DownloadsTest(Fixture,unittest.TestCase):
         self.assertEqual(batch['state'],'review')
         self.lib.downloads.apply(batch_id)
         self.assertEqual((self.shows/'某新剧 (2023)'/'Season 01'/'某新剧 (2023) - S01E01.mkv').read_bytes(),b'episode one'*3)
+
+    def test_a_drop_after_progress_does_not_use_up_the_attempts(self):
+        path = next(iter(self.content))
+        batch_id = self.queue()
+        self.lib.downloads.tick()
+        file = next(f for f in self.lib.downloads.public(batch_id)['files'] if f['path']==path)
+        self.lib.downloads.update_file(file['id'],attempts=ATTEMPTS-1)
+        self.drive.breaks[path] = 5
+        self.lib.downloads.tick()
+        file = next(f for f in self.lib.downloads.public(batch_id)['files'] if f['path']==path)
+        self.assertEqual((file['state'],file['attempts'],file['done']),('ready',1,5),'arriving bytes mean the drive is working')
+
+    def test_a_drop_without_progress_still_gives_up_in_the_end(self):
+        path = next(iter(self.content))
+        batch_id = self.queue()
+        self.lib.downloads.tick()
+        file = next(f for f in self.lib.downloads.public(batch_id)['files'] if f['path']==path)
+        self.lib.downloads.update_file(file['id'],attempts=ATTEMPTS-1)
+        self.drive.breaks[path] = 0
+        self.lib.downloads.tick()
+        file = next(f for f in self.lib.downloads.public(batch_id)['files'] if f['path']==path)
+        self.assertEqual(file['state'],'failed')
+
+    def test_a_full_disk_is_reported_as_such_and_not_retried(self):
+        class Full:
+            def write(self,chunk):raise OSError(28,'磁盘已满')
+        stream = self.drive.stream
+        def full(ref,start,sink):
+            sink.out = Full()
+            return stream(ref,start,sink)
+        self.drive.stream = full
+        batch_id = self.queue()
+        self.lib.downloads.tick()
+        self.lib.downloads.tick()
+        file = self.lib.downloads.public(batch_id)['files'][0]
+        self.assertEqual((file['state'],file['error']),('failed','写入硬盘失败：磁盘已满'))
+
+    def test_a_full_disk_is_not_mistaken_for_a_dropped_connection_by_the_network_code(self):
+        self.assertFalse(issubclass(DiskError,OSError))
 
     def test_server_that_ignores_the_range_starts_over(self):
         name = '某新剧.2023/某新剧.S01E02.1080p.mkv'

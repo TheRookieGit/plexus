@@ -5,6 +5,8 @@ const FILE_STATES={waiting:'等待转存',ready:'排队中',downloading:'下载�
 const LOGIN_BUSY=['waiting','scanned','checking'];
 const dl={batches:[],netdisk:{},locations:[],shares:[],timer:null,signing:'',loginTimer:null,pendingPaste:false,cards:new Map()};
 const speedText=n=>n?`${sizeText(n)}/s`:'';
+const fileNote=f=>f.error?(f.retry_in?`${f.error}（${f.retry_in} 秒后重试）`:f.state==='ready'?`${f.error}（等空位重试）`:f.error):
+  f.state==='downloading'?(f.speed?[speedText(f.speed),etaText(f.size-f.done,f.speed)].filter(Boolean).join(' · '):'正在连接…'):'';
 const etaText=(left,speed)=>{if(!speed||left<=0)return '';const s=Math.round(left/speed);return s>=3600?`约 ${Math.floor(s/3600)} 小时 ${Math.round(s%3600/60)} 分`:s>=60?`约 ${Math.round(s/60)} 分钟`:`约 ${s} 秒`;};
 const percent=(done,size)=>size?Math.min(100,done/size*100):0;
 const relative=(path,base)=>path.toLowerCase().startsWith(base.toLowerCase()+'\\')?path.slice(base.length+1):path;
@@ -82,8 +84,7 @@ $('#shares').onclick=async event=>{const add=event.target.closest('[data-add]');
 
 // The queue ----------------------------------------------------------------------------------------------------------
 function fileRow(f,batch){
-  const live=f.state==='downloading';const left=f.size-f.done;
-  const note=f.error?(f.retry_in?`${f.error}（${f.retry_in} 秒后重试）`:f.error):live?[speedText(f.speed),etaText(left,f.speed)].filter(Boolean).join(' · '):'';
+  const note=fileNote(f);
   const tools=batch.state==='downloading'||batch.state==='queued'||batch.state==='saving'?[
     ['ready','downloading'].includes(f.state)&&`<button class="icon-button small" data-file-action="pause" data-id="${f.id}" title="暂停">${icon('pause')}</button>`,
     f.state==='paused'&&`<button class="icon-button small" data-file-action="resume" data-id="${f.id}" title="继续">${icon('play')}</button>`,
@@ -123,7 +124,8 @@ function batchHTML(b){
     <details class="dl-files"${live&&b.files.length<=6?' open':''}><summary>文件（${Object.entries(counts).map(([s,n])=>`${FILE_STATES[s]||s} ${n}`).join('，')}）</summary><ul>${b.files.map(f=>fileRow(f,b)).join('')}</ul></details>
     <div class="batch-tools">${tools}</div></article>`;
 }
-// A card is rebuilt only when what it shows changes shape, so typing in the review form is never interrupted.
+// A card is rebuilt when what it shows changes shape, unless that would interrupt typing in the review form. Only typing:
+// a clicked button or file list also keeps the focus, and must not freeze the card's states.
 const shape=b=>JSON.stringify([b.state,b.login,b.error,b.plan,b.identity,b.files.map(f=>[f.state,f.error&&!f.retry_in])]);
 function renderQueue(){
   const queue=$('#queue');
@@ -134,7 +136,7 @@ function renderQueue(){
   let previous=null;
   for(const b of dl.batches){
     let el=dl.cards.get(b.id);const sig=shape(b);
-    if(!el||el.dataset.sig!==sig&&!el.contains(document.activeElement)){
+    if(!el||el.dataset.sig!==sig&&!(el.contains(document.activeElement)&&document.activeElement.matches('input,select,textarea'))){
       const open=el?$('.dl-files',el)?.open:undefined;
       const fresh=document.createRange().createContextualFragment(batchHTML(b)).firstElementChild;fresh.dataset.sig=sig;
       if(open!==undefined&&$('.dl-files',fresh))$('.dl-files',fresh).open=open;
@@ -145,8 +147,7 @@ function renderQueue(){
       const progress=$('.batch-progress',el);if(progress)progress.textContent=`${sizeText(b.done)} / ${sizeText(b.size)}${b.speed?` · ${speedText(b.speed)} · ${etaText(b.size-b.done,b.speed)}`:''}`;
       for(const f of b.files){const row=$(`[data-file-id="${f.id}"]`,el);if(!row)continue;
         $('.bar span',row).style.width=percent(f.done,f.size).toFixed(1)+'%';$('.dl-bytes',row).textContent=`${sizeText(f.done)} / ${sizeText(f.size)}`;
-        const note=f.error?(f.retry_in?`${f.error}（${f.retry_in} 秒后重试）`:f.error):f.state==='downloading'?[speedText(f.speed),etaText(f.size-f.done,f.speed)].filter(Boolean).join(' · '):'';
-        $('.dl-note',row).textContent=note;}
+        $('.dl-note',row).textContent=fileNote(f);}
     }
     if(previous?previous.nextElementSibling!==el:queue.firstElementChild!==el)previous?previous.after(el):queue.prepend(el);
     previous=el;
