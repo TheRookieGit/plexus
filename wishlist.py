@@ -4,24 +4,54 @@ Connected to the wish hub (心愿中枢, the my-collections site), the wishlist 
 kept here in hub_wishes, owned as before by Plex's guid or by title and year, and each title Plex has is reported
 back so the hub shows it as owned, and the hub's original screenshots of a wish can be seen, added and removed
 here. A match the hub marks 「不是这个」 is passed over. The wishlist kept here before
-connecting goes up to the hub once and stays as it was, for going back. Favourites stay here."""
+connecting goes up to the hub once and stays as it was, for going back. Favourites stay here.
+
+A wish's share links go both ways, one entry for each link: added or removed on either side, the other follows, and
+when both change at once neither change is lost."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import re
 import threading
 import time
 import urllib.parse
 import uuid
 
 from collectionkit.hub import Hub, HubError
+from collectionkit.netdisk import links as share_links
 from discover import rank, search
 
 WEB = 'https://therookiegit.github.io/plexus/'  # Where the hub's 「查看」 opens an owned title.
 PULL_SECONDS = 60
+LINK = re.compile(r'(?:https?://|magnet:)',re.I)
 # A wish is owned once the catalog has files of the same Plex title, or of the same title within a year.
 OWNED = '''SELECT id,title,guid FROM items WHERE files>0 AND ((?<>'' AND guid=?) OR (title=? AND (? IS NULL OR year IS NULL OR ABS(year-?)<=1)))
            ORDER BY source='plex' DESC LIMIT 20'''
+
+
+def split_links(text):
+    """The pasted text as one entry for each link. A line with no link, such as an extraction code, stays with the link above it."""
+    entries = []
+    for line in str(text or '').splitlines():
+        line = line.strip()
+        if not line:continue
+        if not entries or LINK.search(line):entries.append(line)
+        else:entries[-1] += '\n'+line
+    return entries
+
+
+def link_key(entry):
+    """The same share however it is written: with its code in the address or after it, say."""
+    found = share_links(entry)
+    return f'{found[0]["drive"]}:{found[0]["id"]}' if found else entry.strip()
+
+
+def merge_links(mine,theirs,last):
+    """Three-way: last is what the two sides agreed on. What either side added stays, what either side removed goes."""
+    here,agreed = {link_key(e) for e in mine},{link_key(e) for e in last}
+    kept = [e for e in theirs if link_key(e) in here or link_key(e) not in agreed]+[e for e in mine if link_key(e) not in agreed]
+    return list({link_key(e):e for e in reversed(kept)}.values())[::-1]
 
 
 def iso(seconds):
@@ -149,14 +179,24 @@ class Wishlist:
         extra = {k:v for k,v in (item.get('extra') or {}).items() if k not in ('year','download')}
         if year:extra['year'] = str(year)
         ids = {k:v for k,v in (item.get('externalIds') or {}).items() if k!='plexGuid'}|({'plexGuid':guid} if guid else {})
-        # The pasted share text stays whole: an extraction code is often on the line after its link.
+        # An extraction code is often on the line after its link, and stays with it.
         item.update(category='tv' if kind=='show' else 'movie',title=title,extra=extra,externalIds=ids,thumb=thumb,summary=summary,
-                    links=[links] if links else [],note=note,updatedAt=iso(now))
+                    links=split_links(links),note=note,updatedAt=iso(now))
         return item
 
+    def links_of(self,wish_id):
+        with self.lib.db() as db:
+            row = db.execute('SELECT links FROM hub_wishes WHERE id=?',(wish_id,)).fetchone()
+        return split_links(row[0]) if row else []
+
     def save_to_hub(self,values,shots=None):
+        # Links may have changed in the hub while this wish was open here: keep both sides' changes. Offline there is nothing newer to see.
+        agreed = self.links_of(values[0])
+        self.pull()
         with self.lib.db() as db:
             row = db.execute('SELECT data FROM hub_wishes WHERE id=?',(values[0],)).fetchone()
+        merged = merge_links(split_links(values[7]),self.links_of(values[0]),agreed)
+        values = (*values[:7],'\n'.join(merged)[:5000],values[8])
         item = self.hub_item(values,json.loads(row['data']) if row else None,time.time())
         if isinstance(shots,list):item['shots'] = [str(s)[:64] for s in shots if isinstance(s,str) and s][:30]
         with self.lib.db() as db:self.store(db,item)

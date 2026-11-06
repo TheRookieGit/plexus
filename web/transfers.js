@@ -110,7 +110,7 @@ $('#queue').onclick=async event=>{
   loadQueue();
 };
 
-// Links sent over from a wishlist entry on this device, or from the wish hub's 「送到 Plexus」 as #links=
+// Links sent over from a wishlist entry on this device, or from the wish hub's 「同步到 Plexus」 as #links=
 // (after the #, so they are never sent to a server, and taken out of the address at once).
 function takeHandedLinks(){
   let handed='';try{handed=sessionStorage.getItem('plexus-paste')||'';sessionStorage.removeItem('plexus-paste');}catch{}

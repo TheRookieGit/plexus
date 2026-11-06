@@ -71,6 +71,36 @@ class HubWishlistTests(Fixture,unittest.TestCase):
         self.wishes.pull()
         self.assertEqual(self.listed()['网页上加的']['links'],'https://pan.baidu.com/s/1a\nhttps://pan.quark.cn/s/b')
 
+    def test_each_link_stays_its_own_entry_in_the_hub_after_saving_here(self):
+        self.wishes.pair(self.fake.token('plexus'))
+        a,b = 'https://pan.baidu.com/s/1a','https://pan.quark.cn/s/b'
+        self.fake.add(wish('h4','两个链接',links=[a,b],updatedAt='2026-05-02T00:00:00Z'))
+        self.wishes.pull()
+        row = self.listed()['两个链接']
+        self.wishes.save({'id':'h4','title':'两个链接','kind':'movie','links':row['links'],'note':'改了备注'})
+        self.assertEqual(self.fake.items['h4'][0]['links'],[a,b])
+
+    def test_links_changed_on_both_sides_at_once_lose_neither_change(self):
+        self.wishes.pair(self.fake.token('plexus'))
+        a,b,c = 'https://pan.quark.cn/s/a','https://pan.quark.cn/s/b','https://pan.quark.cn/s/c'
+        d = 'https://pan.quark.cn/s/d?pwd=1234'
+        self.fake.add(wish('h5','两边都改',links=[a,b],updatedAt='2026-05-02T00:00:00Z'))
+        self.wishes.pull()
+        # The form opened here shows a and b. Meanwhile the hub adds c, and here a is removed and d added.
+        self.fake.add(wish('h5','两边都改',links=[a,b,c],updatedAt='2026-05-03T00:00:00Z'))
+        self.wishes.save({'id':'h5','title':'两边都改','kind':'movie','links':f'{b}\n{d}'})
+        self.assertEqual(self.fake.items['h5'][0]['links'],[b,c,d])
+        self.assertEqual(self.listed()['两边都改']['links'],f'{b}\n{c}\n{d}')
+
+    def test_links_removed_in_the_hub_go_here_too(self):
+        self.wishes.pair(self.fake.token('plexus'))
+        a,b = 'https://pan.quark.cn/s/a','https://pan.quark.cn/s/b'
+        self.fake.add(wish('h6','中枢删链接',links=[a,b],updatedAt='2026-05-02T00:00:00Z'))
+        self.wishes.pull()
+        self.fake.add(wish('h6','中枢删链接',links=[b],updatedAt='2026-05-03T00:00:00Z'))
+        self.wishes.pull()
+        self.assertEqual(self.listed()['中枢删链接']['links'],b)
+
     def test_a_rejected_match_is_passed_over_and_a_title_gone_from_plex_is_owned_no_more(self):
         self.fake.add(wish('h1','星际穿越',year=2014))
         self.wishes.pair(self.fake.token('plexus'))
