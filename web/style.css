@@ -223,7 +223,8 @@ textarea:focus{border-color:var(--accent)}
 .pick-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pick .badge{background:var(--raised)}
 .pick .badge.res{background:var(--accent)}
-.share-foot{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;padding:12px 14px;border-top:1px solid var(--line)}
+.share-foot{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;padding:12px 14px}
+.share-folder{display:flex;flex-direction:column;gap:6px;padding:12px 14px 0;border-top:1px solid var(--line);color:var(--muted);font-size:13px}
 input[type=checkbox]{accent-color:var(--accent);width:16px;height:16px}
 .queue-head{display:flex;align-items:baseline;gap:12px}
 .transfer{border:1px solid var(--line);border-radius:14px;background:var(--surface);padding:16px 18px;margin-bottom:14px}

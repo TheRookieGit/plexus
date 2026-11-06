@@ -1,25 +1,40 @@
-"""Saving share links into your own drive: paste a link, choose its files, and they land in a Plexus转存 folder there.
+"""Saving share links into your own drive: paste a link, choose its files, and they land in a folder of their own,
+named after the day and the show, inside a Plexus转存 folder there.
 
 Plexus stops at the drive. Quark limits third-party downloads to about 100 KB/s a connection, so the files are
 downloaded by hand in the drive's own client."""
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 import uuid
 
+from disk import guess_title
 from netdisk import FOLDER, NetDiskError, links, wanted
 
 RESOLVE_SECONDS = 1800
+NAME_LENGTH = 100
 SCHEMA = '''
 DROP TABLE IF EXISTS dl_files;
 DROP TABLE IF EXISTS dl_batches;
 CREATE TABLE IF NOT EXISTS transfers (
   id TEXT PRIMARY KEY,created REAL NOT NULL,drive TEXT NOT NULL,link TEXT NOT NULL,title TEXT NOT NULL,state TEXT NOT NULL,
-  error TEXT NOT NULL,share TEXT NOT NULL,files TEXT NOT NULL,finished REAL);
+  error TEXT NOT NULL,share TEXT NOT NULL,files TEXT NOT NULL,finished REAL,folder TEXT NOT NULL DEFAULT '');
 '''
 WAIT_LOGIN = ' 重新登录后会自动继续转存。'
+
+
+def folder_name(name):
+    """A name both drives accept for one folder, or '' when nothing usable is left."""
+    return re.sub(r'[\x00-\x1f\\/:*?"<>|\s]+',' ',str(name)).strip()[:NAME_LENGTH].rstrip('. ')
+
+
+def suggested_folder(title):
+    """Today and the show, as in '11.6.2026 菜鸟老警'."""
+    now = time.localtime()
+    return f'{now.tm_mon}.{now.tm_mday}.{now.tm_year} {folder_name(guess_title(title)[0])}'.rstrip('. ')
 
 
 class Transfers:
@@ -32,6 +47,8 @@ class Transfers:
         self.started = False
         with lib.db() as db:
             db.executescript(SCHEMA)
+            if not any(row['name']=='folder' for row in db.execute('PRAGMA table_info(transfers)')):
+                db.execute("ALTER TABLE transfers ADD COLUMN folder TEXT NOT NULL DEFAULT ''")
             # Whatever was running when Plexus stopped picks up again.
             db.execute("UPDATE transfers SET state='queued' WHERE state='saving'")
 
@@ -101,30 +118,31 @@ class Transfers:
             top = {f['path'].split('/')[0] for f in files}
             title = share.get('title') or (next(iter(top)) if len(top)==1 else files[0]['name'] if files else '')
             self.resolved[token] = {'drive':drive.key,'link':link,'share':share,'files':files,'title':title,'expires':now+RESOLVE_SECONDS}
-            shares.append({'token':token,'drive':drive.key,'label':drive.label,'title':title,'files':listed})
+            shares.append({'token':token,'drive':drive.key,'label':drive.label,'title':title,'folder':suggested_folder(title),'files':listed})
         return {'shares':shares}
 
-    def add(self,token,indexes):
+    def add(self,token,indexes,folder=''):
         resolved = self.resolved.get(str(token))
         if not resolved:raise ValueError('分享链接的读取结果已过期，请重新粘贴链接。')
         chosen = [resolved['files'][i] for i in sorted({int(i) for i in indexes}) if 0<=int(i)<len(resolved['files'])]
         if not chosen:raise ValueError('请至少选择一个文件。')
+        folder = folder_name(folder) or suggested_folder(resolved['title'])
         transfer_id = uuid.uuid4().hex[:12]
         files = [f|{'state':'waiting','error':''} for f in chosen]
         with self.lib.db() as db:
-            db.execute('INSERT INTO transfers VALUES (?,?,?,?,?,?,?,?,?,?)',
+            db.execute('INSERT INTO transfers VALUES (?,?,?,?,?,?,?,?,?,?,?)',
                        (transfer_id,time.time(),resolved['drive'],json.dumps(resolved['link']),resolved['title'][:200],'queued','',
-                        json.dumps(resolved['share'],ensure_ascii=False),json.dumps(files,ensure_ascii=False),None))
+                        json.dumps(resolved['share'],ensure_ascii=False),json.dumps(files,ensure_ascii=False),None,folder))
         self.wake.set()
         return {'id':transfer_id}
 
     # Saving into your drive ---------------------------------------------------------------------------------------
 
-    def _store(self,drive,share,files):
+    def _store(self,drive,share,files,folder):
         """Save the files still waiting, marking each as its result arrives, so a failure part way repeats none of them."""
         waiting = [f for f in files if f['state']=='waiting']
         if not waiting:return
-        for item,result in drive.save(share,waiting):
+        for item,result in drive.save(share,waiting,folder):
             item['state'],item['error'] = ('failed',result) if isinstance(result,str) else ('saved','')
 
     def _save(self,transfer_id):
@@ -135,7 +153,7 @@ class Transfers:
             files = row['files']
             self.update(transfer_id,state='saving',error='')
             drive = self.lib.netdisk.drive(row['drive'])
-            try:self._store(drive,row['share'],files)
+            try:self._store(drive,row['share'],files,row['folder'])
             except NetDiskError as exc:
                 if exc.login:raise
                 # The share's access token may have expired since the links were read; read the share again once.
@@ -143,7 +161,7 @@ class Transfers:
                 fresh = {f['path']:f for f in listed}
                 for f in files:f.update({k:v for k,v in fresh.get(f['path'],{}).items() if k.startswith('_')})
                 outcome['share'] = json.dumps(share,ensure_ascii=False)
-                self._store(drive,share,files)
+                self._store(drive,share,files,row['folder'])
             failed = [f for f in files if f['state']=='failed']
             if failed:outcome |= {'state':'failed','error':f'{len(failed)} 个文件没能转存：{failed[0]["error"]}'}
             else:outcome |= {'state':'done','finished':time.time()}
@@ -185,7 +203,8 @@ class Transfers:
         drive = self.lib.netdisk.drive(row['drive'])
         files = [{k:f[k] for k in ('path','size','state','error')} for f in row['files']]
         return {k:row[k] for k in ('id','created','drive','title','state','error','finished')}|{
-            'files':files,'size':sum(f['size'] for f in files),'label':drive.label,'folder':FOLDER,
+            'files':files,'size':sum(f['size'] for f in files),'label':drive.label,
+            'folder':f'{FOLDER}/{row["folder"]}' if row['folder'] else FOLDER,
             # Waiting for a sign-in: still queued, but its drive is signed out.
             'login':drive.key if row['state']=='queued' and not drive.signed_in else ''}
 

@@ -316,7 +316,7 @@ class Handler(BaseHTTPRequestHandler):
             if self.path=='/api/netdisk/login':return self.json(self.lib.netdisk.drive(str(data.get('drive',''))).login())
             if self.path=='/api/netdisk/logout':return self.json(self.lib.netdisk.drive(str(data.get('drive',''))).logout())
             if self.path=='/api/transfers/resolve':return self.json(self.lib.transfers.resolve(str(data.get('text',''))[:20000]))
-            if self.path=='/api/transfers/add':return self.json(self.lib.transfers.add(data.get('token'),data.get('files') or []))
+            if self.path=='/api/transfers/add':return self.json(self.lib.transfers.add(data.get('token'),data.get('files') or [],data.get('folder') or ''))
             if self.path=='/api/transfers/control':return self.json(self.lib.transfers.control(data))
             if self.path=='/api/favorite':return self.json(self.lib.wishlist.favorite(str(data['id']),bool(data.get('on'))))
             if self.path=='/api/wishlist/save':return self.json(self.lib.wishlist.save(data))

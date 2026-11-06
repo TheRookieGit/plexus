@@ -135,7 +135,7 @@ class FakeDrives:
             assert form['path']=='/Plexus转存' and query['bdstoken']=='bdstoken'
             self.baidu_folder = True;return self.reply({'errno':0})
         if url.path=='/share/transfer':
-            assert (query['shareid'],query['from'],query['sekey'],query['async'],form['path'])==('77','88','rk=','1','/Plexus转存')
+            assert (query['shareid'],query['from'],query['sekey'],query['async'])==('77','88','rk=','1') and form['path'].startswith('/Plexus转存/')
             ids = json.loads(form['fsidlist']);self.saved['baidu'] = ids
             return self.reply({'errno':0,'extra':{'list':[{'from_fs_id':i,'to':'/Plexus转存/Inception.2010.1080p.mkv'} for i in ids]}})
         if url.path=='/api/filemetas':

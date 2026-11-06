@@ -48,7 +48,7 @@ function shareHTML(share,index){
   const files=share.files.map(f=>`<label class="pick${f.kind?'':' skip'}"><input type="checkbox" data-file="${f.index}" ${f.kind?'checked':'disabled'}><span class="pick-name" title="${escapeHTML(f.path)}">${escapeHTML(f.path)}</span><span class="badge${f.kind==='video'?' res':''}">${f.kind==='video'?'视频':f.kind==='subtitle'?'字幕':'不转存'}</span><span class="muted">${sizeText(f.size)}</span></label>`).join('');
   return `<div class="share" data-share="${index}"><div class="share-head"><div><strong>${escapeHTML(share.title||'分享')}</strong><small>${escapeHTML(share.label)} · ${share.files.length} 个文件</small></div>
     <label class="check-all"><input type="checkbox" data-all checked>全选</label></div><div class="picks">${files}</div>
-    <div class="share-foot"><span class="pick-total muted"></span><button class="button" data-add>${icon('link')}<span>转存到我的网盘</span></button></div></div>`;
+    <label class="share-folder">转存到「Plexus转存」里的文件夹<input data-folder maxlength="100" value="${escapeHTML(share.folder||'')}"></label><div class="share-foot"><span class="pick-total muted"></span><button class="button" data-add>${icon('link')}<span>转存到我的网盘</span></button></div></div>`;
 }
 function updateTotals(card){const share=dl.shares[+card.dataset.share];const chosen=$$('[data-file]:checked',card).map(i=>share.files[+i.dataset.file]);
   $('.pick-total',card).textContent=`已选 ${chosen.length} 个 · ${sizeText(chosen.reduce((n,f)=>n+f.size,0))}`;}
@@ -65,7 +65,7 @@ $('#shares').onchange=event=>{const card=event.target.closest('.share[data-share
   if(event.target.matches('[data-all]'))$$('[data-file]:not(:disabled)',card).forEach(i=>i.checked=event.target.checked);updateTotals(card);};
 $('#shares').onclick=async event=>{const add=event.target.closest('[data-add]');if(!add)return;const card=add.closest('.share');const share=dl.shares[+card.dataset.share];
   add.disabled=true;
-  try{await api('/api/transfers/add',{token:share.token,files:$$('[data-file]:checked',card).map(i=>+i.dataset.file)});
+  try{await api('/api/transfers/add',{token:share.token,files:$$('[data-file]:checked',card).map(i=>+i.dataset.file),folder:$('[data-folder]',card).value});
     card.remove();if(!$('#shares .share[data-share]'))$('#paste').value='';loadQueue();
   }catch(error){add.disabled=false;onError(error);}};
 
@@ -81,7 +81,7 @@ function transferHTML(t){
     t.state!=='saving'&&`<button class="button secondary small" data-action="remove">${icon(t.state==='queued'?'close':'trash')}<span>${t.state==='queued'?'取消':'删除记录'}</span></button>`].filter(Boolean).join('');
   const done=t.state==='done'?`<p class="muted">在${escapeHTML(t.label)}的「${escapeHTML(t.folder)}」文件夹里，到客户端手动下载。删除记录不会删除网盘里的文件。</p>`:'';
   return `<article class="transfer ${t.state}" data-transfer="${t.id}"><div class="transfer-head"><div class="transfer-title"><strong>${escapeHTML(t.title||'分享')}</strong>
-    <small>${escapeHTML(t.label)} · ${t.files.length} 个文件 · ${sizeText(t.size)}</small></div><span class="state-badge ${t.state}">${t.login?`等待登录${escapeHTML(t.label)}`:STATES[t.state]||t.state}</span></div>
+    <small>${escapeHTML(t.label)} · ${t.files.length} 个文件 · ${sizeText(t.size)} → ${escapeHTML(t.folder)}</small></div><span class="state-badge ${t.state}">${t.login?`等待登录${escapeHTML(t.label)}`:STATES[t.state]||t.state}</span></div>
     ${t.error?`<p class="error-text">${escapeHTML(t.error)}</p>`:''}${done}
     <details class="dl-files"><summary>文件（${Object.entries(counts).map(([s,n])=>`${FILE_STATES[s]||s} ${n}`).join('，')}）</summary><ul>${t.files.map(fileRow).join('')}</ul></details>
     <div class="transfer-tools">${tools}</div></article>`;
