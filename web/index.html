@@ -19,7 +19,7 @@
     <a class="brand" href="./" aria-label="Plexus 首页"><img src="favicon.svg" alt=""><span>Plexus<small>和 Plex 同步的影视收藏</small></span></a>
     <label class="search"><span data-icon="search"></span><input id="search" type="search" placeholder="搜索片名、原名或文件夹" autocomplete="off"></label>
     <div class="top-actions">
-      <a id="downloads-link" class="button secondary" href="downloads.html" title="从网盘链接下载，查看下载进度"><span data-icon="download"></span><span>下载</span><span id="downloads-count" class="count" hidden></span></a>
+      <a class="button secondary" href="downloads.html" title="把网盘分享链接转存到自己的网盘"><span data-icon="link"></span><span>转存</span><span id="transfers-count" class="count" hidden></span></a>
       <button id="tree-button" class="button secondary" title="查看每个盘和文件夹里有多少视频"><span data-icon="folder"></span><span>目录树</span></button>
       <button id="sync-button" class="button secondary" title="立即和 Plex 同步并扫描硬盘"><span data-icon="refresh"></span><span id="sync-label">同步</span></button>
       <button id="settings-button" class="icon-button" aria-label="设置" title="设置"><span data-icon="settings"></span></button>
@@ -64,7 +64,7 @@
       <label>备注<input id="wish-note" type="text" maxlength="200" placeholder="例如：等 4K 版本"></label>
       <div id="wish-shots-field" class="stack" hidden><span class="muted">原截图（和心愿中枢同步；可以选图片，也可以直接粘贴）</span><div id="wish-shots" class="wish-shots"></div></div>
       <div class="dialog-actions"><button id="wish-delete" class="button secondary danger" type="button" hidden>删除</button><button id="wish-owned" class="button secondary" type="button" hidden>已拥有 · 查看</button>
-        <button id="wish-download" class="button secondary" type="button" hidden><span data-icon="download"></span><span>去下载</span></button><button class="button" type="submit">保存</button></div>
+        <button id="wish-transfer" class="button secondary" type="button" hidden><span data-icon="link"></span><span>去转存</span></button><button class="button" type="submit">保存</button></div>
     </form>
   </dialog>
 

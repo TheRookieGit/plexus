@@ -1,30 +1,31 @@
 <!doctype html>
+<!-- The wish hub links to this address, so the page keeps its name though it now only saves into your drive. -->
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#14161a">
-  <meta name="description" content="Plexus 下载：粘贴夸克或百度网盘链接，下载到 Plex 媒体库并按 Plex 格式命名。">
-  <title>Plexus · 下载</title>
+  <meta name="description" content="Plexus 转存：粘贴夸克或百度网盘链接，转存到自己的网盘。">
+  <title>Plexus · 转存</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <meta name="apple-mobile-web-app-title" content="Plexus">
   <link rel="stylesheet" href="style.css?v=dev">
   <script defer src="common.js?v=dev"></script>
-  <script defer src="downloads.js?v=dev"></script>
+  <script defer src="transfers.js?v=dev"></script>
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="./" aria-label="Plexus 首页"><img src="favicon.svg" alt=""><span>Plexus<small>下载</small></span></a>
+    <a class="brand" href="./" aria-label="Plexus 首页"><img src="favicon.svg" alt=""><span>Plexus<small>转存</small></span></a>
     <div class="top-actions">
       <div id="accounts" class="accounts"></div>
       <a class="button secondary" href="./"><span data-icon="film"></span><span>影视库</span></a>
     </div>
   </header>
 
-  <main class="downloads">
+  <main class="transfers">
     <section class="panel">
-      <h2>添加下载</h2>
+      <h2>添加转存</h2>
       <form id="paste-form" class="paste">
         <textarea id="paste" rows="3" placeholder="粘贴夸克网盘或百度网盘的分享链接，提取码可以一起粘贴，一次可以粘贴多个链接"></textarea>
         <button class="button" type="submit"><span data-icon="link"></span><span>读取链接</span></button>
@@ -34,7 +35,7 @@
     </section>
 
     <section>
-      <div class="queue-head"><h2>下载队列</h2><span id="queue-summary" class="muted"></span></div>
+      <div class="queue-head"><h2>转存记录</h2><span id="queue-summary" class="muted"></span></div>
       <div id="queue"></div>
     </section>
   </main>

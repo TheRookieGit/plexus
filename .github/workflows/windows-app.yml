@@ -34,7 +34,7 @@ jobs:
           node --check web/common.js
           node --check web/app.js
           node --check web/tree.js
-          node --check web/downloads.js
+          node --check web/transfers.js
       - name: Record build version
         shell: pwsh
         run: '@{ sha = $env:GITHUB_SHA } | ConvertTo-Json | Set-Content -Encoding utf8 build_info.json'
@@ -59,7 +59,7 @@ jobs:
           $page = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8790/downloads.html
           Stop-Process $app -Force
           if (-not $ok) { throw 'Packaged app did not answer' }
-          if ($page.StatusCode -ne 200) { throw 'Packaged app did not serve the download page' }
+          if ($page.StatusCode -ne 200) { throw 'Packaged app did not serve the transfer page' }
       - name: Check tray and window dependencies load
         shell: pwsh
         run: |

@@ -1,6 +1,6 @@
 """Plexus Windows app: the service in the system tray, the catalog in an Edge app window.
 
-Closing the window leaves the service running, so downloads continue and the GitHub web page can
+Closing the window leaves the service running, so saving into a drive continues and the GitHub web page can
 still reach this computer. The app updates itself from the latest GitHub build, so it is installed only once.
 """
 import json
@@ -28,8 +28,6 @@ WEB_ORIGIN = 'https://therookiegit.github.io'
 RUN_KEY = r'Software\Microsoft\Windows\CurrentVersion\Run'
 RUN_VALUE = 'Plexus'
 UPDATE_INTERVAL = 600
-# Downloads resume after a restart, so a pending update waits for them only this long.
-DOWNLOAD_WAIT = 7200
 BUNDLE = Path(getattr(sys,'_MEIPASS',Path(__file__).resolve().parent))
 ICON = BUNDLE/'assets'/'plexus.ico'
 FROZEN = getattr(sys,'frozen',False)
@@ -152,19 +150,10 @@ class Updater:
         self.current = build_info().get('sha','')
         self.wake = threading.Event()
         self.status = '尚未检查更新' if self.current else '开发版本，不自动更新'
-        self.waiting_since = None
         self.pending = False
 
     def busy(self):
-        lib = self.service.library
-        # Moving files into the library or saving into a drive must finish; a download can stop and resume.
-        if lib.downloads.saving or lib.downloads.applying():
-            return True
-        if lib.downloads.active:
-            self.waiting_since = self.waiting_since or time.time()
-            return time.time()-self.waiting_since<DOWNLOAD_WAIT
-        self.waiting_since = None
-        return False
+        return bool(self.service.library.transfers.saving)
 
     def check(self,manual=False):
         if not FROZEN or not self.current:
@@ -181,7 +170,7 @@ class Updater:
             if manual:self.notify(self.status)
             return
         if self.busy():
-            self.status = '有新版本，等待下载完成后更新'
+            self.status = '有新版本，等待转存完成后更新'
             self.pending = True
             if manual:self.notify(self.status)
             return
@@ -256,7 +245,7 @@ def main():
     version = build_info().get('sha','')[:7] or '开发版'
     tray = pystray.Icon('plexus',Image.open(ICON),APP_NAME,menu=pystray.Menu(
         pystray.MenuItem('打开 Plexus',lambda *_:open_window(url,args.data_dir),default=True),
-        pystray.MenuItem('下载',lambda *_:open_window(url+'/downloads.html',args.data_dir)),
+        pystray.MenuItem('转存',lambda *_:open_window(url+'/downloads.html',args.data_dir)),
         pystray.MenuItem('开机自动启动',lambda *_:set_autostart(not autostart_enabled()),checked=lambda _:autostart_enabled()),
         pystray.MenuItem('检查更新',lambda *_:updater.wake.set()),
         pystray.MenuItem(lambda _:f'版本 {version} · {updater.status}',None,enabled=False),

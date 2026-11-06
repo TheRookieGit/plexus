@@ -23,7 +23,7 @@ from app_runtime import bind_server, runtime_identity
 from catalog import Catalog
 from deleter import Deleter
 from disk import norm
-from downloads import Downloads
+from transfers import Transfers
 from netdisk import NetDisk, NetDiskError
 from wishlist import Wishlist
 from media_tree import MediaTree
@@ -63,7 +63,7 @@ class Library:
         self.deleter = Deleter(self)
         self.wishlist = Wishlist(self)
         self.netdisk = NetDisk(self)
-        self.downloads = Downloads(self)
+        self.transfers = Transfers(self)
 
     @contextmanager
     def db(self):
@@ -125,7 +125,7 @@ class Library:
             self.start_sync()
 
     def status(self):
-        return {'sync':dict(self.sync_state),'stats':self.catalog.stats(),'sections':self.catalog.sections(),'downloads':self.downloads.summary(),
+        return {'sync':dict(self.sync_state),'stats':self.catalog.stats(),'sections':self.catalog.sections(),'transfers':self.transfers.summary(),
                 'plex_url':self.setting('plex_url',DEFAULT_URL)}
 
     def poster(self,item_id,width,url=''):
@@ -164,7 +164,7 @@ class Library:
 
 class Handler(BaseHTTPRequestHandler):
     server_version = 'Plexus/0.1'
-    STATIC = {'/':'web/index.html',**{f'/{name}':f'web/{name}' for name in ('downloads.html','common.js','app.js','tree.js','downloads.js','style.css','favicon.svg','apple-touch-icon.png')}}
+    STATIC = {'/':'web/index.html',**{f'/{name}':f'web/{name}' for name in ('downloads.html','common.js','app.js','tree.js','transfers.js','style.css','favicon.svg','apple-touch-icon.png')}}
     PUBLIC_API = {'/api/session','/api/login'}
     # These act on the Windows machine itself, so other computers may not call them.
     LOCAL_ONLY = {'/api/runtime/reload','/api/app/show','/api/reveal','/api/access/password','/api/settings'}
@@ -265,7 +265,7 @@ class Handler(BaseHTTPRequestHandler):
             if url.path=='/api/tree':return self.json(self.lib.tree.node(json.loads(query.get('path','[]'))))
             if url.path=='/api/poster':
                 return self.send_content(200,'image/jpeg',self.lib.poster(query.get('id',''),int(query.get('w') or 300),query.get('url','')),{'Cache-Control':'private, max-age=86400'})
-            if url.path=='/api/downloads':return self.json(self.lib.downloads.listing())
+            if url.path=='/api/transfers':return self.json(self.lib.transfers.listing())
             if url.path=='/api/netdisk':return self.json(self.lib.netdisk.status())
             if url.path=='/api/wishlist':return self.json(self.lib.wishlist.items())
             if url.path=='/api/hub':return self.json(self.lib.wishlist.hub_status())
@@ -312,14 +312,12 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if self.path=='/api/delete/preview':return self.json(self.lib.deleter.preview(data))
             if self.path=='/api/delete/confirm':return self.json(self.lib.deleter.confirm(data.get('token')))
-            # Quark and Baidu share links: sign in by QR code once, then queue downloads into a library folder.
+            # Quark and Baidu share links: sign in by QR code once, then save them into your own drive.
             if self.path=='/api/netdisk/login':return self.json(self.lib.netdisk.drive(str(data.get('drive',''))).login())
             if self.path=='/api/netdisk/logout':return self.json(self.lib.netdisk.drive(str(data.get('drive',''))).logout())
-            if self.path=='/api/downloads/resolve':return self.json(self.lib.downloads.resolve(str(data.get('text',''))[:20000]))
-            if self.path=='/api/downloads/add':return self.json(self.lib.downloads.add(data.get('token'),data.get('files') or [],str(data.get('location',''))))
-            if self.path=='/api/downloads/control':return self.json(self.lib.downloads.control(data))
-            if self.path=='/api/downloads/identify':return self.json(self.lib.downloads.identify(data))
-            if self.path=='/api/downloads/apply':return self.json(self.lib.downloads.apply(str(data.get('id','')),bool(data.get('rename',True))))
+            if self.path=='/api/transfers/resolve':return self.json(self.lib.transfers.resolve(str(data.get('text',''))[:20000]))
+            if self.path=='/api/transfers/add':return self.json(self.lib.transfers.add(data.get('token'),data.get('files') or []))
+            if self.path=='/api/transfers/control':return self.json(self.lib.transfers.control(data))
             if self.path=='/api/favorite':return self.json(self.lib.wishlist.favorite(str(data['id']),bool(data.get('on'))))
             if self.path=='/api/wishlist/save':return self.json(self.lib.wishlist.save(data))
             if self.path=='/api/wishlist/shot':return self.json(self.lib.wishlist.add_shot(data.get('data')))
@@ -368,7 +366,7 @@ def start(args):
     server.lan = args.lan
     server.allowed_origins = {o.rstrip('/') for o in args.allow_origin}
     lib.start_sync()
-    lib.downloads.start()
+    lib.transfers.start()
     threading.Thread(target=lib.auto_sync,daemon=True).start()
     return server
 

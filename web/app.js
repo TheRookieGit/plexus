@@ -25,8 +25,7 @@ function renderStatus(status){
     (state.issue&&state.view==='library'?`<button role="tab" aria-selected="true" data-clear-issue>${escapeHTML(ISSUES[state.issue])}<small>×</small></button>`:'');
   const drive=$('#drive-filter');const chosen=drive.value;
   drive.innerHTML='<option value="">全部硬盘</option>'+s.drives.map(d=>`<option value="${escapeHTML(d.drive)}">${escapeHTML(d.drive)} 盘</option>`).join('');drive.value=chosen;
-  const pending=(status.downloads?.active||0)+(status.downloads?.review||0);$('#downloads-count').hidden=!pending;$('#downloads-count').textContent=pending;
-  $('#downloads-link').title=status.downloads?.review?`${status.downloads.review} 个下载等你确认名称`:'从网盘链接下载，查看下载进度';
+  const pending=status.transfers?.active||0;$('#transfers-count').hidden=!pending;$('#transfers-count').textContent=pending;
   $('.filter-controls').hidden=state.view!=='library';$('#wish-add').hidden=state.view!=='wishlist';
 }
 let statusTimer;
@@ -165,7 +164,7 @@ function confirmDelete(plan){
 }
 $('#delete-dialog').addEventListener('click',event=>{if(event.target.closest('[data-close-delete]'))$('#delete-dialog').close();});
 
-// Wishlist: titles still to get, looked up in Plex's online catalog, with the share links to download them from.
+// Wishlist: titles still to get, looked up in Plex's online catalog, with the share links to get them from.
 async function loadWishes(){
   try{const data=await api('/api/wishlist');state.wishes=data.items;state.hub=data.hub;if(state.status)renderStatus(state.status);if(state.view!=='wishlist')return;
     const q=state.q.toLowerCase();const shown=state.wishes.filter(w=>!q||w.title.toLowerCase().includes(q));
@@ -179,7 +178,7 @@ function openWish(id){
   $('#wish-title-text').textContent=wish.id?'编辑想看':'添加想看';$('#wish-id').value=wish.id||'';$('#wish-title').value=wish.title||'';$('#wish-year').value=wish.year||'';
   $('#wish-kind').value=wish.kind||'movie';$('#wish-links').value=wish.links||'';$('#wish-note').value=wish.note||'';$('#wish-results').innerHTML='';$('#wish-query').value='';
   wishShots=[...(wish.shots||[])];$('#wish-shots-field').hidden=!state.hub;renderWishShots();
-  $('#wish-delete').hidden=!wish.id;$('#wish-download').hidden=!wish.links;$('#wish-owned').hidden=!wish.owned;$('#wish-owned').dataset.open=wish.owned||'';
+  $('#wish-delete').hidden=!wish.id;$('#wish-transfer').hidden=!wish.links;$('#wish-owned').hidden=!wish.owned;$('#wish-owned').dataset.open=wish.owned||'';
   $('#wish-dialog').showModal();(wish.id?$('#wish-links'):$('#wish-query')).focus();
 }
 $('#wish-add').onclick=()=>openWish('');
@@ -224,8 +223,8 @@ $('#wish-dialog').addEventListener('paste',event=>{if(!state.hub)return;const fi
   if(files.length){event.preventDefault();addWishShots(files);}});
 $('#wish-delete').onclick=async()=>{try{await api('/api/wishlist/delete',{id:$('#wish-id').value});$('#wish-dialog').close();loadWishes();}catch(error){onError(error);}};
 $('#wish-owned').onclick=()=>{$('#wish-dialog').close();openDetail($('#wish-owned').dataset.open);};
-// The download page picks the links up from this device's session, so they never travel in the address.
-$('#wish-download').onclick=()=>{try{sessionStorage.setItem('plexus-paste',$('#wish-links').value);}catch{}location.href='downloads.html';};
+// The transfer page picks the links up from this device's session, so they never travel in the address.
+$('#wish-transfer').onclick=()=>{try{sessionStorage.setItem('plexus-paste',$('#wish-links').value);}catch{}location.href='downloads.html';};
 
 // Settings: the Plex address, and the password other devices sign in with.
 $('#settings-button').onclick=()=>{const status=state.status;const server=status?.sync.server;

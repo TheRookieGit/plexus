@@ -2,7 +2,7 @@
 
 Speaking to the drives, and the sign-ins themselves, come from collectionkit (the my-collections submodule), which
 书屿 and the wish hub share: signing in or out in one of them does so in all. Shares are saved into your own drive
-in a Plexus转存 folder. The queue, resuming and naming live in downloads.py."""
+in a Plexus转存 folder. The queue lives in transfers.py."""
 from __future__ import annotations
 
 import json

@@ -163,10 +163,7 @@ class NetDiskTests(Fixture,unittest.TestCase):
         super().setUp()
         self.lib.netdisk = NetDisk(self.lib)
         self.lib.start_sync = lambda:True
-        downloads = self.lib.downloads
-        downloads.background = False
-        downloads.staging_base = str(self.base/'staging')
-        downloads._tell_plex = lambda section,folders:None
+        self.lib.transfers.background = False
 
     def tearDown(self):
         super().tearDown()
@@ -182,13 +179,11 @@ class NetDiskTests(Fixture,unittest.TestCase):
         wait(lambda:self.lib.netdisk.status()[key]['signed_in'],key+' signed in')
         return status
 
-    def download(self,text,location):
-        share = self.lib.downloads.resolve(text)['shares'][0]
-        batch_id = self.lib.downloads.add(share['token'],[f['index'] for f in share['files'] if f['kind']],str(location))['id']
-        for _ in range(4):
-            self.lib.downloads.retry_at.clear()
-            self.lib.downloads.tick()
-        return share,self.lib.downloads.public(batch_id)
+    def transfer(self,text):
+        share = self.lib.transfers.resolve(text)['shares'][0]
+        transfer_id = self.lib.transfers.add(share['token'],[f['index'] for f in share['files'] if f['kind']])['id']
+        self.lib.transfers.tick()
+        return share,self.lib.transfers.public(transfer_id)
 
     def test_share_links_and_extraction_codes_found_in_pasted_text(self):
         text = ('我用夸克网盘分享了「电影」，点击链接即可保存。\n链接：https://pan.quark.cn/s/34d748b55cc7 提取码：AB12\n'
@@ -199,7 +194,7 @@ class NetDiskTests(Fixture,unittest.TestCase):
         self.assertEqual(links('没有链接'),[])
         self.assertEqual((wanted('a.MKV',10),wanted('a.ass',10),wanted('a.jpg',10),wanted('a.mp4',0)),('video','subtitle','',''))
 
-    def test_quark_sign_in_then_an_episode_resumes_and_lands_under_its_plex_name(self):
+    def test_quark_sign_in_then_a_share_lands_in_your_drive(self):
         status = self.sign_in('quark')
         self.assertEqual(status['login']['state'],'waiting');self.assertTrue(status['login']['qr']);self.assertIn('token=token-1',status['login']['link'])
         self.assertFalse(any(k.startswith('_') for k in status['login']),'tokens stay on the backend')
@@ -208,40 +203,33 @@ class NetDiskTests(Fixture,unittest.TestCase):
         self.assertNotIn('pus-cookie',json.dumps(self.lib.netdisk.drive('quark').session.values()),'cookies are stored protected')
         self.assertTrue(NetDisk(self.lib).drive('quark').signed_in,'the sign-in survives a restart')
 
-        share,batch = self.download('链接：https://pan.quark.cn/s/qshare',self.shows)
+        share,saved = self.transfer('链接：https://pan.quark.cn/s/qshare')
         self.assertEqual(share['title'],'某剧')
         self.assertEqual({f['path']:f['kind'] for f in share['files']}['封面.jpg'],'')
-        self.assertEqual(batch['state'],'review',batch)
+        self.assertEqual(saved['state'],'done',saved)
         self.assertEqual((self.fake.saved['quark']['fid_list'],self.fake.saved['quark']['pdir_fid']),(['f1','f2'],'d1'),'saved from its own folder')
-        ranges = [c['start'] for c in self.fake.calls if c['host']=='cdn.quark.test' and c['path']=='/s-f1']
-        self.assertEqual(ranges,[0,300],'the second request continues where the first stopped')
-        self.lib.downloads.apply(batch['id'])
-        season = self.shows/'某剧 (2024)'/'Season 01'
-        self.assertEqual((season/'某剧 (2024) - S01E01.mkv').read_bytes(),EPISODE)
-        self.assertEqual((season/'某剧 (2024) - S01E01.chs.ass').read_bytes(),SUBTITLE)
+        self.assertFalse([c for c in self.fake.calls if c['path'].endswith('file/download') or c['host']=='cdn.quark.test'],'nothing is downloaded')
 
-        missing = self.lib.downloads.resolve('https://pan.quark.cn/s/gone')['shares'][0]
+        missing = self.lib.transfers.resolve('https://pan.quark.cn/s/gone')['shares'][0]
         self.assertEqual(missing['error'],'夸克网盘：分享不存在')
 
-    def test_baidu_scan_then_extraction_code_checked_and_movie_downloaded(self):
+    def test_baidu_scan_then_extraction_code_checked_and_movie_saved(self):
         status = self.sign_in('baidu')
         self.assertTrue(status['login']['image'].startswith('data:image/png;base64,'),'the QR image is passed on as data')
         self.assertEqual(self.lib.netdisk.status()['baidu']['name'],'百度用户')
-        wrong = self.lib.downloads.resolve('https://pan.baidu.com/s/1bshare?pwd=zzzz')['shares'][0]
+        wrong = self.lib.transfers.resolve('https://pan.baidu.com/s/1bshare?pwd=zzzz')['shares'][0]
         self.assertEqual(wrong['error'],'百度网盘：提取码不对，或者分享已失效。')
-        share,batch = self.download('链接: https://pan.baidu.com/s/1bshare 提取码: abcd',self.movies)
+        share,saved = self.transfer('链接: https://pan.baidu.com/s/1bshare 提取码: abcd')
         self.assertEqual(self.fake.saved['baidu'],[11])
-        self.assertEqual(batch['state'],'review',batch)
-        self.lib.downloads.apply(batch['id'])
-        self.assertEqual((self.movies/'Inception (2010)'/'Inception (2010).mkv').read_bytes(),MOVIE)
+        self.assertEqual(saved['state'],'done',saved)
 
     def test_sign_in_needed_first_and_again_when_it_lapses(self):
-        with self.assertRaises(NetDiskError) as caught:self.lib.downloads.resolve('https://pan.baidu.com/s/1bshare 提取码 abcd')
+        with self.assertRaises(NetDiskError) as caught:self.lib.transfers.resolve('https://pan.baidu.com/s/1bshare 提取码 abcd')
         self.assertEqual(caught.exception.login,'baidu')
-        with self.assertRaises(NetDiskError):self.lib.downloads.resolve('随便一段话')
+        with self.assertRaises(NetDiskError):self.lib.transfers.resolve('随便一段话')
         self.sign_in('quark')
         self.fake.quark_logged_in = False
-        with self.assertRaises(NetDiskError) as caught:self.lib.downloads.resolve('https://pan.quark.cn/s/qshare')
+        with self.assertRaises(NetDiskError) as caught:self.lib.transfers.resolve('https://pan.quark.cn/s/qshare')
         self.assertEqual(caught.exception.login,'quark');self.assertIn('重新扫码',str(caught.exception))
         self.assertFalse(self.lib.netdisk.status()['quark']['signed_in'])
         self.sign_in('quark')
@@ -264,55 +252,23 @@ class NetDiskTests(Fixture,unittest.TestCase):
         shuyu.drive('quark').login()
         wait(lambda:shuyu.status()['quark']['signed_in'],'signed in from 书屿')
         self.assertEqual(self.lib.netdisk.status()['quark']['name'],'夸克用户')
-        share,batch = self.download('https://pan.quark.cn/s/qshare',self.shows)
-        self.assertEqual(batch['state'],'review',batch)
+        share,saved = self.transfer('https://pan.quark.cn/s/qshare')
+        self.assertEqual(saved['state'],'done',saved)
         self.lib.netdisk.drive('quark').logout()
         self.assertFalse(shuyu.status()['quark']['signed_in'],'signing out here signs 书屿 out too')
 
-    def test_a_download_waits_for_a_new_sign_in_and_resumes_where_it_stopped(self):
-        self.sign_in('quark')
-        shuyu = self.other_app()
-        share = self.lib.downloads.resolve('https://pan.quark.cn/s/qshare')['shares'][0]
-        batch_id = self.lib.downloads.add(share['token'],[f['index'] for f in share['files'] if f['kind']],str(self.shows))['id']
-        downloads = self.lib.downloads
-        downloads.tick()  # Saved into your drive.
-        downloads.tick()  # The episode stops 300 bytes in.
-        # 书屿 signs out meanwhile: nothing new starts, and nothing is called failed.
-        shuyu.drive('quark').logout()
-        for _ in range(3):downloads.retry_at.clear();downloads.tick()
-        batch = downloads.public(batch_id)
-        self.assertEqual((batch['state'],batch['login']),('downloading','quark'),batch)
-        self.assertNotIn('failed',[f['state'] for f in batch['files']])
-        # Signed in again in 书屿, but the drive has dropped that sign-in by the time the download asks for its link.
-        shuyu.drive('quark').login();wait(lambda:shuyu.status()['quark']['signed_in'],'signed in again from 书屿')
-        self.fake.quark_logged_in = False
-        downloads.retry_at.clear();downloads.tick()
-        batch = downloads.public(batch_id)
-        episode = next(f for f in batch['files'] if f['path'].endswith('.mkv'))
-        self.assertEqual((batch['state'],batch['login'],episode['state']),('downloading','quark','ready'),batch)
-        self.assertIn('断点',episode['error'])
-        self.assertFalse(shuyu.status()['quark']['signed_in'],'the lapsed sign-in is dropped for every app')
-        # Signing in again here picks it up from where it stopped.
-        self.fake.quark_logged_in = True
-        self.sign_in('quark')
-        for _ in range(3):downloads.retry_at.clear();downloads.tick()
-        batch = downloads.public(batch_id)
-        self.assertEqual((batch['state'],batch['login']),('review',''),batch)
-        ranges = [c['start'] for c in self.fake.calls if c['host']=='cdn.quark.test' and c['path']=='/s-f1']
-        self.assertEqual(ranges,[0,300],'the episode continues from the 300 bytes it had')
-
     def test_saving_waits_for_a_sign_in_instead_of_failing(self):
         self.sign_in('quark')
-        share = self.lib.downloads.resolve('https://pan.quark.cn/s/qshare')['shares'][0]
-        batch_id = self.lib.downloads.add(share['token'],[f['index'] for f in share['files'] if f['kind']],str(self.shows))['id']
+        share = self.lib.transfers.resolve('https://pan.quark.cn/s/qshare')['shares'][0]
+        transfer_id = self.lib.transfers.add(share['token'],[f['index'] for f in share['files'] if f['kind']])['id']
         self.fake.quark_logged_in = False
-        self.lib.downloads.tick()
-        batch = self.lib.downloads.public(batch_id)
-        self.assertEqual((batch['state'],batch['login']),('queued','quark'),batch);self.assertIn('重新登录后会从断点继续',batch['error'])
+        self.lib.transfers.tick()
+        saved = self.lib.transfers.public(transfer_id)
+        self.assertEqual((saved['state'],saved['login']),('queued','quark'),saved);self.assertIn('重新登录后会自动继续转存',saved['error'])
         self.fake.quark_logged_in = True
         self.sign_in('quark')
-        for _ in range(4):self.lib.downloads.retry_at.clear();self.lib.downloads.tick()
-        self.assertEqual(self.lib.downloads.public(batch_id)['state'],'review')
+        self.lib.transfers.tick()
+        self.assertEqual(self.lib.transfers.public(transfer_id)['state'],'done')
 
 
 if __name__=='__main__':

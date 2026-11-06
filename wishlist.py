@@ -1,4 +1,4 @@
-"""Favourites among what is owned, and a wishlist of titles still to get, each with the share links to download it from.
+"""Favourites among what is owned, and a wishlist of titles still to get, each with the share links to get it from.
 
 Connected to the wish hub (心愿中枢, the my-collections site), the wishlist is the hub's movies and series instead:
 kept here in hub_wishes, owned as before by Plex's guid or by title and year, and each title Plex has is reported
@@ -15,7 +15,7 @@ import urllib.parse
 import uuid
 
 from collectionkit.hub import Hub, HubError
-from naming import rank, search
+from discover import rank, search
 
 WEB = 'https://therookiegit.github.io/plexus/'  # Where the hub's 「查看」 opens an owned title.
 PULL_SECONDS = 60
