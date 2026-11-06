@@ -47,10 +47,10 @@ class FakeDrives:
         start = int((request.get_header('Range') or 'bytes=0-')[6:].split('-')[0])
         call = {'host':url.netloc,'path':url.path,'query':query,'cookies':cookies,'data':data,'form':form,'agent':request.get_header('User-agent'),'start':start}
         with self.lock:self.calls.append(call)
-        if url.netloc.endswith('quark.cn') or url.netloc.endswith('quark.test'):return self.quark(url,query,cookies,data,sink,start)
+        if url.netloc.endswith('quark.cn') or url.netloc.endswith('quark.test'):return self.quark(url,query,cookies,data,sink,start,call['agent'])
         return self.baidu(url,query,cookies,form,sink,call['agent'],start)
 
-    def quark(self,url,query,cookies,data,sink,start):
+    def quark(self,url,query,cookies,data,sink,start,agent):
         if url.path=='/cas/ajax/getTokenForQrcodeLogin':
             self.quark_polls += 1
             return self.reply({'status':2000000,'data':{'members':{'token':f'token-{self.quark_polls}'}}})
@@ -93,6 +93,8 @@ class FakeDrives:
         if path=='task':
             return self.reply({'status':200,'code':0,'data':{'status':2,'save_as':{'save_as_top_fids':['s-'+f for f in self.saved['quark']['fid_list']]}}})
         if path=='file/download':
+            # Quark refuses a browser whatever the file's size, under a message about size limits.
+            if 'quark-cloud-drive' not in agent:return self.reply({'status':400,'code':23018,'message':'download file size limit[x]'},400)
             return self.reply({'status':200,'code':0,'data':[{'fid':f,'download_url':'https://dl.quark.test/'+f} for f in data['fids']]})
         return self.reply({'status':404,'code':1,'message':'unknown'},404)
 
