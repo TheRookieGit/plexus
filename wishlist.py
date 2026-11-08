@@ -2,8 +2,8 @@
 
 Connected to the wish hub (心愿中枢, the my-collections site), the wishlist is the hub's movies and series instead:
 kept here in hub_wishes, owned as before by Plex's guid or by title and year, and each title Plex has is reported
-back so the hub shows it as owned, and the hub's original screenshots of a wish can be seen, added and removed
-here. A match the hub marks 「不是这个」 is passed over. The wishlist kept here before
+back so the hub shows it as owned, and the hub's original screenshots of a wish, and the 小红书 note link it was
+collected from (the hub's `link`), can be seen, added and removed here. A match the hub marks 「不是这个」 is passed over. The wishlist kept here before
 connecting goes up to the hub once and stays as it was, for going back. Favourites stay here.
 
 A wish not yet matched to a title in Plex's online catalog, added here without picking one or brought in from the hub,
@@ -133,6 +133,7 @@ class Wishlist:
                 owned = self.owned(db,row)
                 row['owned'] = owned['id'] if owned else ''
                 row['shots'] = self.shots_of(row)
+                row['source_link'] = self.link_of(row)
                 for key in ('data','rejected','reported'):row.pop(key,None)
         self.match_soon()
         return {'items':rows,'hub':self.hub.paired,'pending':self.busy()}
@@ -145,7 +146,7 @@ class Wishlist:
         wish_id = str(data.get('id') or '') or uuid.uuid4().hex[:12]
         values = (wish_id,title,year,kind,str(data.get('guid',''))[:200],str(data.get('thumb',''))[:500],str(data.get('summary',''))[:600],
                   str(data.get('links','')).strip()[:5000],str(data.get('note','')).strip()[:1000])
-        if self.hub.paired:self.save_to_hub(values,data.get('shots'))
+        if self.hub.paired:self.save_to_hub(values,data.get('shots'),data.get('source_link'))
         else:
             with self.lib.db() as db:
                 added = db.execute('SELECT added FROM wishlist WHERE id=?',(wish_id,)).fetchone()
@@ -245,6 +246,13 @@ class Wishlist:
         except ValueError:shots = None
         return [s for s in shots if isinstance(s,str)] if isinstance(shots,list) else []
 
+    @staticmethod
+    def link_of(row):
+        """The hub's link of a wish: the 小红书 note it was collected from, or any page the wish came from."""
+        try:link = json.loads(row.get('data') or '{}').get('link')
+        except ValueError:link = None
+        return link if isinstance(link,str) else ''
+
     def shot(self,shot_id):
         """One of the hub's screenshots as a data URL; fetched from the hub the first time."""
         try:data = self.hub.shot(str(shot_id or ''))
@@ -275,7 +283,7 @@ class Wishlist:
             row = db.execute('SELECT links FROM hub_wishes WHERE id=?',(wish_id,)).fetchone()
         return split_links(row[0]) if row else []
 
-    def save_to_hub(self,values,shots=None):
+    def save_to_hub(self,values,shots=None,source_link=None):
         # Links may have changed in the hub while this wish was open here: keep both sides' changes. Offline there is nothing newer to see.
         agreed = self.links_of(values[0])
         self.pull()
@@ -285,6 +293,11 @@ class Wishlist:
         values = (*values[:7],'\n'.join(merged)[:5000],values[8])
         item = self.hub_item(values,json.loads(row['data']) if row else None,time.time())
         if isinstance(shots,list):item['shots'] = [str(s)[:64] for s in shots if isinstance(s,str) and s][:30]
+        # Left alone when not given, as the shots are; cleared when given empty.
+        if source_link is not None:
+            link = str(source_link).strip()
+            if len(link)>2048 or (link and not re.match(r'^https?://\S+$',link,re.I)):raise ValueError('小红书链接应以 http:// 或 https:// 开头。')
+            item['link'] = link
         with self.lib.db() as db:self.store(db,item)
         self.hub.put_wish(item)
         self.report()

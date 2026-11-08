@@ -62,6 +62,7 @@
         <label>类型<select id="wish-kind"><option value="movie">电影</option><option value="show">剧集</option></select></label></div>
       <label>网盘链接（夸克或百度，可以带提取码，一行一个）<textarea id="wish-links" rows="3" placeholder="https://pan.quark.cn/s/…"></textarea></label>
       <label>备注<input id="wish-note" type="text" maxlength="200" placeholder="例如：等 4K 版本"></label>
+      <div id="wish-source-field" class="stack" hidden><label>小红书链接（和心愿中枢同步）<input id="wish-source" type="url" maxlength="2048" placeholder="收藏这部片的小红书笔记，https://…"></label><a id="wish-open-source" class="muted" target="_blank" rel="noopener noreferrer" hidden>打开笔记 ↗</a></div>
       <div id="wish-shots-field" class="stack" hidden><span class="muted">原截图（和心愿中枢同步；可以选图片，也可以直接粘贴）</span><div id="wish-shots" class="wish-shots"></div></div>
       <div class="dialog-actions"><button id="wish-delete" class="button secondary danger" type="button" hidden>删除</button><button id="wish-owned" class="button secondary" type="button" hidden>已拥有 · 查看</button>
         <button id="wish-transfer" class="button secondary" type="button" hidden><span data-icon="link"></span><span>去转存</span></button><button class="button" type="submit">保存</button></div>

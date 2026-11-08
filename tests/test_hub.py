@@ -148,6 +148,23 @@ class HubWishlistTests(Fixture,unittest.TestCase):
         self.wishes.unpair()
         with self.assertRaises(ValueError):self.wishes.add_shot('data:image/jpeg;base64,/9j/')
 
+    def test_the_xiaohongshu_link_comes_from_the_hub_and_goes_back_with_the_wish(self):
+        note = 'https://www.xiaohongshu.com/explore/abc'
+        self.fake.add(wish('h1','笔记里的片',link=note,rating=4))
+        self.wishes.pair(self.fake.token('plexus'))
+        self.assertEqual(self.listed()['笔记里的片']['source_link'],note)
+        self.wishes.save({'id':'h1','title':'笔记里的片','kind':'movie'})
+        self.assertEqual(self.fake.items['h1'][0]['link'],note,'saving without it leaves it alone')
+        self.wishes.save({'id':'h1','title':'笔记里的片','kind':'movie','source_link':'https://xhslink.com/a/new'})
+        sent = self.fake.items['h1'][0]
+        self.assertEqual((sent['link'],sent['rating']),('https://xhslink.com/a/new',4))
+        self.fake.add(wish('h1','笔记里的片',link='https://xhslink.com/a/hub',updatedAt='2026-01-02T00:00:00Z'))
+        self.wishes.pull()
+        self.assertEqual(self.listed()['笔记里的片']['source_link'],'https://xhslink.com/a/hub','changed in the hub, changed here')
+        self.wishes.save({'id':'h1','title':'笔记里的片','kind':'movie','source_link':''})
+        self.assertEqual(self.fake.items['h1'][0]['link'],'','cleared here, cleared in the hub')
+        with self.assertRaises(ValueError):self.wishes.save({'id':'h1','title':'笔记里的片','kind':'movie','source_link':'not a link'})
+
     def test_wishes_from_the_hub_are_matched_to_plex_and_the_match_goes_back(self):
         catalog = {'黑洞频率':[{'title':'黑洞频率','original_title':'Frequency','year':2018,'kind':'show','guid':'plex://show/f','thumb':'https://img/show.jpg','summary':'剧'},
                                {'title':'黑洞频率','original_title':'Frequency','year':2000,'kind':'movie','guid':'plex://movie/f','thumb':'https://img/f.jpg','summary':'父子'}],

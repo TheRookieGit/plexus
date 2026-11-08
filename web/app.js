@@ -182,6 +182,7 @@ function openWish(id){
   $('#wish-title-text').textContent=wish.id?'编辑想看':'添加想看';$('#wish-id').value=wish.id||'';$('#wish-title').value=wish.title||'';$('#wish-year').value=wish.year||'';
   $('#wish-kind').value=wish.kind||'movie';$('#wish-links').value=wish.links||'';$('#wish-note').value=wish.note||'';$('#wish-results').innerHTML='';$('#wish-query').value='';
   wishShots=[...(wish.shots||[])];$('#wish-shots-field').hidden=!state.hub;renderWishShots();
+  $('#wish-source-field').hidden=!state.hub;$('#wish-source').value=wish.source_link||'';renderWishSource();
   $('#wish-delete').hidden=!wish.id;$('#wish-transfer').hidden=!wish.links;$('#wish-owned').hidden=!wish.owned;$('#wish-owned').dataset.open=wish.owned||'';
   $('#wish-dialog').showModal();(wish.id?$('#wish-links'):$('#wish-query')).focus();
 }
@@ -197,8 +198,12 @@ $('#wish-results').onclick=event=>{const pick=event.target.closest('[data-pick]'
   $('#wish-title').value=r.title;$('#wish-year').value=r.year||'';$('#wish-kind').value=r.kind;wishPick={guid:r.guid,thumb:r.thumb,summary:r.summary};
   $('#wish-results').innerHTML='';$('#wish-query').value='';$('#wish-links').focus();};
 $('#wish-form').onsubmit=async event=>{event.preventDefault();
-  try{await api('/api/wishlist/save',{id:$('#wish-id').value,title:$('#wish-title').value,year:$('#wish-year').value,kind:$('#wish-kind').value,links:$('#wish-links').value,note:$('#wish-note').value,...wishPick,...(state.hub?{shots:wishShots}:{})});
+  try{await api('/api/wishlist/save',{id:$('#wish-id').value,title:$('#wish-title').value,year:$('#wish-year').value,kind:$('#wish-kind').value,links:$('#wish-links').value,note:$('#wish-note').value,...wishPick,...(state.hub?{shots:wishShots,source_link:$('#wish-source').value}:{})});
     $('#wish-dialog').close();toast('已保存到想看。');loadWishes();}catch(error){onError(error);}};
+// The 小红书 note the wish was collected from, shared with the wish hub like the screenshots.
+function renderWishSource(){let url='';try{const u=new URL($('#wish-source').value.trim());if(['http:','https:'].includes(u.protocol))url=u.href;}catch{}
+  $('#wish-open-source').hidden=!url;if(url)$('#wish-open-source').href=url;}
+$('#wish-source').addEventListener('input',renderWishSource);
 // Original screenshots, shared with the wish hub: shown from the hub, added here go up to it when the wish is saved.
 let wishShots=[];const shotCache=new Map();
 function renderWishShots(){
