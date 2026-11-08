@@ -165,8 +165,12 @@ function confirmDelete(plan){
 $('#delete-dialog').addEventListener('click',event=>{if(event.target.closest('[data-close-delete]'))$('#delete-dialog').close();});
 
 // Wishlist: titles still to get, looked up in Plex's online catalog, with the share links to get them from.
+// Wishes are matched to Plex in the background after adding or syncing: look again until that is done, for the posters.
+let wishPoll;
 async function loadWishes(){
-  try{const data=await api('/api/wishlist');state.wishes=data.items;state.hub=data.hub;if(state.status)renderStatus(state.status);if(state.view!=='wishlist')return;
+  try{const data=await api('/api/wishlist');state.wishes=data.items;state.hub=data.hub;if(state.status)renderStatus(state.status);
+    clearTimeout(wishPoll);if(data.pending)wishPoll=setTimeout(()=>{if(state.view==='wishlist'&&!$('#wish-dialog').open)loadWishes();},2500);
+    if(state.view!=='wishlist')return;
     const q=state.q.toLowerCase();const shown=state.wishes.filter(w=>!q||w.title.toLowerCase().includes(q));
     $('#grid').innerHTML=shown.map(w=>`<button class="card" data-wish="${escapeHTML(w.id)}">${posterHTML(w,w.thumb?'id='+encodeURIComponent('wish:'+w.id):'')}<span class="flags">${w.owned?'<span class="badge res">已拥有</span>':''}${w.links?`<span class="badge">${icon('link')}有链接</span>`:''}</span><span class="card-title">${escapeHTML(w.title)}</span><span class="card-meta">${[w.year,w.kind==='show'?'剧集':'电影',w.note].filter(Boolean).map(escapeHTML).join(' · ')}</span></button>`).join('')||`<p class="empty">${q?'没有符合条件的想看。':'还没有想看的影视。点「添加想看」，搜索片名并记下网盘链接。'}</p>`;
     observePosters($('#grid'));$('#result-count').textContent=shown.length?`共 ${number(shown.length)} 部`:'';$('#pager').hidden=true;

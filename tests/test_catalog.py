@@ -64,6 +64,9 @@ class Fixture:
                  ('2','episode'):[episode(11,10,1,1,self.shows/'某剧'/'S01E01.mkv'),episode(12,10,1,2,self.shows/'某剧'/'S01E02.mkv')]}
         self.lib = Library(base/'data')
         self.lib.plex = lambda:FakePlex(sections,items)
+        # Matching wishes to Plex's online catalog runs in the background; tests call match() themselves.
+        self.lib.wishlist.match_soon = lambda:None
+        self.lib.wishlist.find = lambda title,kind:[]
         self.items = items
         self.lib.catalog.sync(self.lib.plex())
 

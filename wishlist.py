@@ -6,6 +6,9 @@ back so the hub shows it as owned, and the hub's original screenshots of a wish 
 here. A match the hub marks 「不是这个」 is passed over. The wishlist kept here before
 connecting goes up to the hub once and stays as it was, for going back. Favourites stay here.
 
+A wish not yet matched to a title in Plex's online catalog, added here without picking one or brought in from the hub,
+is matched in the background when its title is clear enough, so it gets Plex's poster, and the match goes up to the hub.
+
 A wish's share links go both ways, one entry for each link: added or removed on either side, the other follows, and
 when both change at once neither change is lost."""
 from __future__ import annotations
@@ -21,6 +24,7 @@ import uuid
 from collectionkit.hub import Hub, HubError
 from collectionkit.netdisk import links as share_links
 from discover import rank, search
+from plex import PlexError
 
 WEB = 'https://therookiegit.github.io/plexus/'  # Where the hub's 「查看」 opens an owned title.
 PULL_SECONDS = 60
@@ -54,6 +58,22 @@ def merge_links(mine,theirs,last):
     return list({link_key(e):e for e in reversed(kept)}.values())[::-1]
 
 
+def plain(text):
+    """A title without spaces or punctuation, for comparing: 「第二期·发光的蝴蝶（毛孩子TV)」 and 「第二期 发光的蝴蝶 (毛孩子TV）」 are the same."""
+    return re.sub(r'[\W_]+','',str(text or '')).casefold()
+
+
+def best_match(results,title,year=None):
+    """The catalog title a wish means, or None when it is not clear: one of the same name and year; or, for a wish with a year,
+    Plex's own first result when its year agrees, as Plex finds 「Noelle」 under its Chinese title 诺艾尔 without the original."""
+    key = plain(title)
+    if not key or not results:return None
+    def near(item):return bool(year and item.get('year') and abs(item['year']-year)<=1)
+    for item in rank(results,title,year):
+        if key in {plain(item['title']),plain(item.get('original_title'))} and (not year or not item.get('year') or near(item)):return item
+    return results[0] if near(results[0]) else None
+
+
 def iso(seconds):
     return datetime.fromtimestamp(seconds,timezone.utc).isoformat().replace('+00:00','Z')
 
@@ -69,6 +89,9 @@ class Wishlist:
         self.hub = hub or Hub('plexus')
         self.pulled = 0
         self.pulling = threading.Lock()
+        self.pull_thread = None
+        self.matching = threading.Lock()
+        self.match_wanted = False
         with lib.db() as db:
             db.executescript('''
             CREATE TABLE IF NOT EXISTS favorites (key TEXT PRIMARY KEY,added REAL NOT NULL);
@@ -77,6 +100,7 @@ class Wishlist:
             CREATE TABLE IF NOT EXISTS hub_wishes (id TEXT PRIMARY KEY,title TEXT NOT NULL,year INTEGER,kind TEXT NOT NULL,
               guid TEXT NOT NULL,thumb TEXT NOT NULL,summary TEXT NOT NULL,links TEXT NOT NULL,note TEXT NOT NULL,added REAL NOT NULL,
               data TEXT NOT NULL,rejected TEXT NOT NULL DEFAULT '[]',reported TEXT NOT NULL DEFAULT '');
+            CREATE TABLE IF NOT EXISTS wish_match_tried (id TEXT PRIMARY KEY,key TEXT NOT NULL);
             ''')
 
     def favorite(self,item_id,on):
@@ -110,7 +134,8 @@ class Wishlist:
                 row['owned'] = owned['id'] if owned else ''
                 row['shots'] = self.shots_of(row)
                 for key in ('data','rejected','reported'):row.pop(key,None)
-        return {'items':rows,'hub':self.hub.paired}
+        self.match_soon()
+        return {'items':rows,'hub':self.hub.paired,'pending':self.busy()}
 
     def save(self,data):
         title = str(data.get('title','')).strip()[:200]
@@ -120,12 +145,12 @@ class Wishlist:
         wish_id = str(data.get('id') or '') or uuid.uuid4().hex[:12]
         values = (wish_id,title,year,kind,str(data.get('guid',''))[:200],str(data.get('thumb',''))[:500],str(data.get('summary',''))[:600],
                   str(data.get('links','')).strip()[:5000],str(data.get('note','')).strip()[:1000])
-        if self.hub.paired:
-            self.save_to_hub(values,data.get('shots'))
-            return {'id':wish_id}
-        with self.lib.db() as db:
-            added = db.execute('SELECT added FROM wishlist WHERE id=?',(wish_id,)).fetchone()
-            db.execute('INSERT OR REPLACE INTO wishlist VALUES (?,?,?,?,?,?,?,?,?,?)',(*values,added[0] if added else time.time()))
+        if self.hub.paired:self.save_to_hub(values,data.get('shots'))
+        else:
+            with self.lib.db() as db:
+                added = db.execute('SELECT added FROM wishlist WHERE id=?',(wish_id,)).fetchone()
+                db.execute('INSERT OR REPLACE INTO wishlist VALUES (?,?,?,?,?,?,?,?,?,?)',(*values,added[0] if added else time.time()))
+        if not values[4]:self.match_soon()
         return {'id':wish_id}
 
     def delete(self,wish_id):
@@ -150,6 +175,67 @@ class Wishlist:
     def search(self,query,kind=''):
         plex = self.lib.plex()
         return {'items':rank(search(plex.token,query,kind),query)}
+
+    # Matching wishes to Plex's online catalog ---------------------------------------------------------------------
+
+    def find(self,title,kind):
+        """Tests replace this."""
+        return search(self.lib.plex().token,title,kind)
+
+    def match(self):
+        """Match each wish without a Plex title, once for each title it is given; the number matched.
+        While the catalog cannot be searched (offline, Plex not set up) the rest wait for next time."""
+        table = self.table
+        with self.lib.db() as db:
+            tried = dict(db.execute('SELECT id,key FROM wish_match_tried').fetchall())
+            wishes = [dict(r) for r in db.execute(f"SELECT id,title,year,kind FROM {table} WHERE guid='' ORDER BY added DESC")]
+        matched,changed = 0,[]
+        for wish in wishes:
+            key = json.dumps([wish['title'],wish['year'],wish['kind']],ensure_ascii=False)
+            if tried.get(wish['id'])==key:continue
+            try:found = best_match(self.find(wish['title'],wish['kind']),wish['title'],wish['year'])
+            except (PlexError,OSError,ValueError):break
+            with self.lib.db() as db:
+                db.execute('INSERT OR REPLACE INTO wish_match_tried VALUES (?,?)',(wish['id'],key))
+                if not found or not found.get('guid'):continue
+                # Only while the wish is as it was when searched: an edit made meanwhile wins.
+                row = db.execute(f"SELECT * FROM {table} WHERE id=? AND guid='' AND title=?",(wish['id'],wish['title'])).fetchone()
+                if not row:continue
+                matched += 1
+                if table=='wishlist':
+                    db.execute('UPDATE wishlist SET guid=?,thumb=?,summary=?,year=? WHERE id=?',
+                               (found['guid'][:200],row['thumb'] or str(found.get('thumb') or '')[:500],row['summary'] or str(found.get('summary') or '')[:600],
+                                row['year'] or found.get('year'),wish['id']))
+                    continue
+                item = json.loads(row['data'])
+                item['externalIds'] = (item.get('externalIds') or {})|{'plexGuid':found['guid']}
+                if not item.get('thumb') and found.get('thumb'):item['thumb'] = found['thumb']
+                if not item.get('summary') and found.get('summary'):item['summary'] = found['summary']
+                if not row['year'] and found.get('year'):item['extra'] = (item.get('extra') or {})|{'year':str(found['year'])}
+                item['updatedAt'] = iso(time.time())
+                self.store(db,item)
+                changed.append(item)
+        # Queued while the hub cannot be reached.
+        if changed:self.hub.put_wish(changed)
+        if matched:self.report()
+        return matched
+
+    def match_soon(self):
+        """Match in the background, so adding or syncing never waits on Plex's online catalog."""
+        self.match_wanted = True
+        if not self.matching.acquire(blocking=False):return
+        def run():
+            try:
+                while self.match_wanted:
+                    self.match_wanted = False
+                    try:self.match()
+                    except Exception:pass  # Tried again on the next add, sync or visit.
+            finally:self.matching.release()
+        threading.Thread(target=run,daemon=True,name='wish-match').start()
+
+    def busy(self):
+        """Still pulling from the hub or matching, so the page looks again shortly."""
+        return self.matching.locked() or self.match_wanted or bool(self.pull_thread and self.pull_thread.is_alive())
 
     # The wish hub -------------------------------------------------------------------------------------------------
 
@@ -256,6 +342,7 @@ class Wishlist:
                 db.execute("INSERT OR REPLACE INTO settings VALUES ('hub_cursor',?)",(data['cursor'],))
             self.pulled = time.time()
         self.report()
+        self.match_soon()
         return True
 
     def refresh(self):
@@ -266,7 +353,8 @@ class Wishlist:
         """Opening the wishlist pulls in the background, so the page never waits on the hub."""
         if self.hub.paired and time.time()-self.pulled>PULL_SECONDS and not self.pulling.locked():
             self.pulled = time.time()
-            threading.Thread(target=self.pull,daemon=True).start()
+            self.pull_thread = threading.Thread(target=self.pull,daemon=True)
+            self.pull_thread.start()
 
     def hub_status(self):
         with self.lib.db() as db:

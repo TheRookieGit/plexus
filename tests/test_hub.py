@@ -148,5 +148,44 @@ class HubWishlistTests(Fixture,unittest.TestCase):
         self.wishes.unpair()
         with self.assertRaises(ValueError):self.wishes.add_shot('data:image/jpeg;base64,/9j/')
 
+    def test_wishes_from_the_hub_are_matched_to_plex_and_the_match_goes_back(self):
+        catalog = {'黑洞频率':[{'title':'黑洞频率','original_title':'Frequency','year':2018,'kind':'show','guid':'plex://show/f','thumb':'https://img/show.jpg','summary':'剧'},
+                               {'title':'黑洞频率','original_title':'Frequency','year':2000,'kind':'movie','guid':'plex://movie/f','thumb':'https://img/f.jpg','summary':'父子'}],
+                   '致命女人':[{'title':'致命女人','original_title':'Why Women Kill','year':2019,'kind':'show','guid':'plex://show/w','thumb':'https://img/w.jpg','summary':'三个女人'}],
+                   '来自深渊 剧场版':[{'title':'来自深渊：深魂的黎明','year':2020,'kind':'movie','guid':'plex://movie/a','thumb':'','summary':''}]}
+        asked = []
+        self.wishes.find = lambda title,kind:asked.append(title) or catalog.get(title,[])
+        self.fake.add(wish('h1','黑洞频率',year=2000,summary='豆瓣8.4'))
+        self.fake.add(wish('h2','致命女人',category='tv'))
+        self.fake.add(wish('h3','来自深渊 剧场版'))
+        self.wishes.pair(self.fake.token('plexus'))
+        self.assertEqual(self.wishes.match(),2)
+        listed = self.listed()
+        self.assertEqual((listed['黑洞频率']['guid'],listed['黑洞频率']['thumb'],listed['黑洞频率']['summary']),('plex://movie/f','https://img/f.jpg','豆瓣8.4'),
+                         'the year picks the movie, and the hub\'s own summary stays')
+        self.assertEqual((listed['致命女人']['guid'],listed['致命女人']['year']),('plex://show/w',2019))
+        self.assertEqual(listed['来自深渊 剧场版']['guid'],'','not clear enough to match')
+        sent = self.fake.items['h1'][0]
+        self.assertEqual((sent['externalIds']['plexGuid'],sent['thumb']),('plex://movie/f','https://img/f.jpg'))
+        self.assertEqual(self.fake.items['h2'][0]['extra']['year'],'2019')
+        asked.clear()
+        self.assertEqual(self.wishes.match(),0)
+        self.assertEqual(asked,[],'each title is searched once')
+        self.wishes.save({'id':'h3','title':'黑洞频率','year':'2000','kind':'movie'})
+        self.wishes.match()
+        self.assertEqual(self.listed()['黑洞频率']['guid'],'plex://movie/f','renamed, so searched again')
+
+    def test_a_wish_added_by_hand_is_matched_and_offline_waits_for_next_time(self):
+        def offline(title,kind):raise OSError('offline')
+        self.wishes.find = offline
+        added = self.wishes.save({'title':'Noelle','year':'2019','kind':'movie'})
+        self.assertEqual(self.wishes.match(),0)
+        self.wishes.find = lambda title,kind:[{'title':'诺艾尔','original_title':'','year':2019,'kind':'movie','guid':'plex://movie/n','thumb':'https://img/n.jpg','summary':'圣诞'}]
+        other = self.wishes.save({'title':'Noelle','year':'2008','kind':'movie'})
+        self.assertEqual(self.wishes.match(),1,'Plex\'s first result under its Chinese title, as its year agrees; not the 2008 one')
+        with self.lib.db() as db:self.assertEqual(db.execute('SELECT guid FROM wishlist WHERE id=?',(other['id'],)).fetchone()[0],'')
+        with self.lib.db() as db:row = db.execute('SELECT guid,thumb,summary FROM wishlist WHERE id=?',(added['id'],)).fetchone()
+        self.assertEqual(tuple(row),('plex://movie/n','https://img/n.jpg','圣诞'))
+
 if __name__=='__main__':
     unittest.main()
